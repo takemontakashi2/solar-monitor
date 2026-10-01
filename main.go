@@ -7,18 +7,28 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "HTTP listen address")
-	data := flag.String("data", "data/solar.db", "SQLite data file")
-	interval := flag.Duration("interval", 60*time.Second, "collection interval")
-	sourceKind := flag.String("source", "mock", "source type: mock, http-json, or echonet")
-	sourceURL := flag.String("source-url", "", "HTTP JSON source URL")
-	echonetAddr := flag.String("echonet-addr", "", "ECHONET Lite target IPv4 address")
-	echonetFields := flag.String("echonet-fields", "pv=027901:e0,load=028701:e7,grid=028801:e7,today=027901:e1:0.001", "ECHONET fields: name=EOJ:EPC[:scale], comma-separated")
-	flag.Parse()
+	if len(os.Args) > 1 && os.Args[1] == "scan" {
+		runScan(os.Args[2:])
+		return
+	}
+	runServer(os.Args[1:])
+}
+
+func runServer(args []string) {
+	fs := flag.NewFlagSet("solar-monitor", flag.ExitOnError)
+	addr := fs.String("addr", ":8080", "HTTP listen address")
+	data := fs.String("data", "data/solar.db", "SQLite data file")
+	interval := fs.Duration("interval", 60*time.Second, "collection interval")
+	sourceKind := fs.String("source", "mock", "source type: mock, http-json, or echonet")
+	sourceURL := fs.String("source-url", "", "HTTP JSON source URL")
+	echonetAddr := fs.String("echonet-addr", "", "ECHONET Lite target IPv4 address")
+	echonetFields := fs.String("echonet-fields", "pv=027901:e0,load=028701:e7,grid=028801:e7,today=027901:e1:0.001", "ECHONET fields: name=EOJ:EPC[:scale], comma-separated")
+	_ = fs.Parse(args)
 
 	store, err := NewStore(*data)
 	if err != nil {
@@ -38,6 +48,22 @@ func main() {
 
 	log.Printf("listening on http://localhost%s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, app.Routes()))
+}
+
+func runScan(args []string) {
+	fs := flag.NewFlagSet("scan", flag.ExitOnError)
+	echonetAddr := fs.String("echonet-addr", "", "ECHONET Lite target IPv4 address")
+	timeout := fs.Duration("timeout", 5*time.Second, "scan timeout")
+	_ = fs.Parse(args)
+	if *echonetAddr == "" {
+		log.Fatal("-echonet-addr is required")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	if err := NewECHONETScanner(*echonetAddr).Print(ctx, os.Stdout); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func buildSource(kind, sourceURL, echonetAddr, echonetFields string) (Source, error) {

@@ -68,6 +68,24 @@ git push -u origin main
 
 `grid_watts` は、正の値を買電、負の値を売電として扱う想定です。
 
+## ECHONET Liteをスキャンする
+
+蓄電池やパワコンがECHONET Lite経由で見えるか調べるには、以下を実行します。
+
+```sh
+./solar-monitor scan -echonet-addr 192.168.100.202
+```
+
+出力されるEOJの例です。
+
+```text
+027901  太陽光発電
+027d01  蓄電池
+028801  低圧スマート電力量メータ
+```
+
+各EOJの `get:` に表示されるEPCが、読み取り可能なプロパティです。蓄電池は `027dxx`、太陽光発電は `0279xx` が手がかりになります。
+
 ## SHARP SUNVISTA JH-RWL8で試す
 
 添付写真の機器は SHARP SUNVISTA のモニター `JH-RWL8` で、IPアドレスは `192.168.100.202` と読めます。
