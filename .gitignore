@@ -13,3 +13,8 @@ photos/
 .DS_Store
 *.swp
 *.tmp
+
+# SQLite sidecar files
+*.db
+*.db-shm
+*.db-wal

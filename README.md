@@ -1,13 +1,13 @@
 # Solar Monitor
 
-Go標準ライブラリだけで動く、家庭用太陽光発電の記録・表示サーバーです。
+Pure Go SQLiteで記録する、家庭用太陽光発電の記録・表示サーバーです。
 単一バイナリとしてビルドでき、タブレットからブラウザで閲覧できます。
 
 ## 起動
 
 ```sh
 go build -o solar-monitor .
-./solar-monitor -addr :8080 -data data/solar.csv -interval 60s
+./solar-monitor -addr :8080 -data data/solar.db -interval 60s
 ```
 
 タブレットからは同じLAN内で以下を開きます。
@@ -22,7 +22,7 @@ http://<このPCやRaspberry PiのIPアドレス>:8080/
 
 ```sh
 git init
-git add README.md go.mod main.go .gitignore
+git add .
 git commit -m "Initial solar monitor"
 ```
 
