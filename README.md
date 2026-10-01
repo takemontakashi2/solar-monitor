@@ -84,7 +84,15 @@ git push -u origin main
 028801  低圧スマート電力量メータ
 ```
 
-特定ノードの詳細を見る場合は `./solar-monitor scan -echonet-addr 192.168.100.202` を実行します。各EOJの `get:` に表示されるEPCが、読み取り可能なプロパティです。蓄電池は `027dxx`、太陽光発電は `0279xx` が手がかりになります。
+特定ノードの詳細を見る場合は `./solar-monitor scan -echonet-addr 192.168.100.202` を実行します。
+
+応答の有無を生パケットで確認する場合は以下を使います。
+
+```sh
+./solar-monitor scan -raw
+./solar-monitor scan -echonet-addr 192.168.100.202 -raw
+```
+各EOJの `get:` に表示されるEPCが、読み取り可能なプロパティです。蓄電池は `027dxx`、太陽光発電は `0279xx` が手がかりになります。
 
 ## SHARP SUNVISTA JH-RWL8で試す
 

@@ -282,3 +282,101 @@ func commonECHONETObjects() []ECHONETObject {
 	}
 	return objects
 }
+
+type RawECHONETPacket struct {
+	Remote string
+	Data   []byte
+}
+
+func DumpRawECHONETDiscovery(ctx context.Context, w io.Writer) error {
+	packets, err := collectRawECHONET(ctx, "", [3]byte{0x0e, 0xf0, 0x01}, 0xd6)
+	if err != nil {
+		return err
+	}
+	printRawECHONETPackets(w, packets)
+	return nil
+}
+
+func DumpRawECHONETTarget(ctx context.Context, w io.Writer, addr string) error {
+	targets := []struct {
+		label string
+		eoj   [3]byte
+		epc   byte
+	}{
+		{label: "node instance list", eoj: [3]byte{0x0e, 0xf0, 0x01}, epc: 0xd6},
+		{label: "node get property map", eoj: [3]byte{0x0e, 0xf0, 0x01}, epc: 0x9f},
+		{label: "solar get property map", eoj: [3]byte{0x02, 0x79, 0x01}, epc: 0x9f},
+		{label: "battery get property map", eoj: [3]byte{0x02, 0x7d, 0x01}, epc: 0x9f},
+		{label: "meter get property map", eoj: [3]byte{0x02, 0x88, 0x01}, epc: 0x9f},
+	}
+	for _, target := range targets {
+		fmt.Fprintf(w, "# %s %s EPC %02x\n", target.label, formatEOJ(target.eoj), target.epc)
+		packets, err := collectRawECHONET(ctx, addr, target.eoj, target.epc)
+		if err != nil {
+			fmt.Fprintf(w, "error: %v\n", err)
+			continue
+		}
+		printRawECHONETPackets(w, packets)
+	}
+	return nil
+}
+
+func collectRawECHONET(ctx context.Context, addr string, eoj [3]byte, epc byte) ([]RawECHONETPacket, error) {
+	conn, err := net.ListenPacket("udp4", ":0")
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	deadline := time.Now().Add(1200 * time.Millisecond)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	_ = conn.SetDeadline(deadline)
+
+	target := echonetMulticastAddr
+	if addr != "" {
+		target = net.JoinHostPort(addr, "3610")
+	}
+	udpAddr, err := net.ResolveUDPAddr("udp4", target)
+	if err != nil {
+		return nil, err
+	}
+	tid := uint16(time.Now().UnixNano())
+	req := []byte{
+		0x10, 0x81, byte(tid >> 8), byte(tid),
+		0x05, 0xff, 0x01,
+		eoj[0], eoj[1], eoj[2],
+		0x62,
+		0x01,
+		epc, 0x00,
+	}
+	if _, err := conn.WriteTo(req, udpAddr); err != nil {
+		return nil, err
+	}
+
+	packets := []RawECHONETPacket{}
+	buf := make([]byte, 1500)
+	for {
+		n, remote, err := conn.ReadFrom(buf)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				break
+			}
+			return nil, err
+		}
+		data := make([]byte, n)
+		copy(data, buf[:n])
+		packets = append(packets, RawECHONETPacket{Remote: remote.String(), Data: data})
+	}
+	return packets, nil
+}
+
+func printRawECHONETPackets(w io.Writer, packets []RawECHONETPacket) {
+	if len(packets) == 0 {
+		fmt.Fprintln(w, "no response")
+		return
+	}
+	for _, packet := range packets {
+		fmt.Fprintf(w, "%s  %s\n", packet.Remote, hex.EncodeToString(packet.Data))
+	}
+}

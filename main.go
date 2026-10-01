@@ -54,9 +54,22 @@ func runScan(args []string) {
 	fs := flag.NewFlagSet("scan", flag.ExitOnError)
 	echonetAddr := fs.String("echonet-addr", "", "ECHONET Lite target IPv4 address")
 	timeout := fs.Duration("timeout", 5*time.Second, "scan timeout")
+	raw := fs.Bool("raw", false, "dump raw UDP responses")
 	_ = fs.Parse(args)
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
+	if *raw {
+		if *echonetAddr == "" {
+			if err := DumpRawECHONETDiscovery(ctx, os.Stdout); err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+		if err := DumpRawECHONETTarget(ctx, os.Stdout, *echonetAddr); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if *echonetAddr == "" {
 		if err := PrintECHONETDiscovery(ctx, os.Stdout); err != nil {
 			log.Fatal(err)
