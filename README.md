@@ -70,10 +70,10 @@ git push -u origin main
 
 ## ECHONET Liteをスキャンする
 
-蓄電池やパワコンがECHONET Lite経由で見えるか調べるには、以下を実行します。
+蓄電池やパワコンがECHONET Lite経由で見えるか調べるには、まずマルチキャスト探索を実行します。
 
 ```sh
-./solar-monitor scan -echonet-addr 192.168.100.202
+./solar-monitor scan
 ```
 
 出力されるEOJの例です。
@@ -84,15 +84,15 @@ git push -u origin main
 028801  低圧スマート電力量メータ
 ```
 
-各EOJの `get:` に表示されるEPCが、読み取り可能なプロパティです。蓄電池は `027dxx`、太陽光発電は `0279xx` が手がかりになります。
+特定ノードの詳細を見る場合は `./solar-monitor scan -echonet-addr 192.168.100.202` を実行します。各EOJの `get:` に表示されるEPCが、読み取り可能なプロパティです。蓄電池は `027dxx`、太陽光発電は `0279xx` が手がかりになります。
 
 ## SHARP SUNVISTA JH-RWL8で試す
 
 添付写真の機器は SHARP SUNVISTA のモニター `JH-RWL8` で、IPアドレスは `192.168.100.202` と読めます。
-同じLANにいる端末から、まず以下を試します。
+同じLANにいる端末から、まず自動探索を試します。
 
 ```sh
-./solar-monitor -source echonet -echonet-addr 192.168.100.202
+./solar-monitor -source echonet
 ```
 
 ECHONET Lite はUDP `3610` を使います。端末側のファイアウォールでUDP通信が止まっている場合は許可してください。

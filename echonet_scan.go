@@ -10,10 +10,17 @@ import (
 	"time"
 )
 
+const echonetMulticastAddr = "224.0.23.0:3610"
+
 type ECHONETScanner struct {
 	addr        string
 	tid         uint16
 	readTimeout time.Duration
+}
+
+type ECHONETNode struct {
+	Addr string
+	EOJ  [3]byte
 }
 
 type ECHONETObject struct {
@@ -24,6 +31,82 @@ type ECHONETObject struct {
 
 func NewECHONETScanner(addr string) *ECHONETScanner {
 	return &ECHONETScanner{addr: net.JoinHostPort(addr, "3610"), tid: uint16(time.Now().UnixNano()), readTimeout: 1200 * time.Millisecond}
+}
+
+func DiscoverECHONETNodes(ctx context.Context) ([]ECHONETNode, error) {
+	conn, err := net.ListenPacket("udp4", ":0")
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	_ = conn.SetDeadline(deadline)
+
+	addr, err := net.ResolveUDPAddr("udp4", echonetMulticastAddr)
+	if err != nil {
+		return nil, err
+	}
+	tid := uint16(time.Now().UnixNano())
+	req := []byte{
+		0x10, 0x81, byte(tid >> 8), byte(tid),
+		0x05, 0xff, 0x01,
+		0x0e, 0xf0, 0x01,
+		0x62,
+		0x01,
+		0xd6, 0x00,
+	}
+	if _, err := conn.WriteTo(req, addr); err != nil {
+		return nil, err
+	}
+
+	nodesByAddr := map[string]ECHONETNode{}
+	buf := make([]byte, 1500)
+	for {
+		n, remote, err := conn.ReadFrom(buf)
+		if err != nil {
+			if len(nodesByAddr) > 0 {
+				break
+			}
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				break
+			}
+			return nil, err
+		}
+		udpAddr, ok := remote.(*net.UDPAddr)
+		if !ok {
+			continue
+		}
+		data, err := echonetPropertyData(buf[:n], 0xd6)
+		if err != nil || len(data) < 4 {
+			continue
+		}
+		nodesByAddr[udpAddr.IP.String()] = ECHONETNode{Addr: udpAddr.IP.String(), EOJ: [3]byte{data[1], data[2], data[3]}}
+	}
+
+	nodes := make([]ECHONETNode, 0, len(nodesByAddr))
+	for _, node := range nodesByAddr {
+		nodes = append(nodes, node)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Addr < nodes[j].Addr })
+	return nodes, nil
+}
+
+func PrintECHONETDiscovery(ctx context.Context, w io.Writer) error {
+	nodes, err := DiscoverECHONETNodes(ctx)
+	if err != nil {
+		return err
+	}
+	if len(nodes) == 0 {
+		fmt.Fprintln(w, "no nodes found")
+		return nil
+	}
+	for _, node := range nodes {
+		fmt.Fprintf(w, "%s  %s  %s\n", node.Addr, formatEOJ(node.EOJ), echonetClassName(node.EOJ))
+	}
+	return nil
 }
 
 func (s *ECHONETScanner) Scan(ctx context.Context) ([]ECHONETObject, error) {

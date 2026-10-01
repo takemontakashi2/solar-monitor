@@ -55,12 +55,14 @@ func runScan(args []string) {
 	echonetAddr := fs.String("echonet-addr", "", "ECHONET Lite target IPv4 address")
 	timeout := fs.Duration("timeout", 5*time.Second, "scan timeout")
 	_ = fs.Parse(args)
-	if *echonetAddr == "" {
-		log.Fatal("-echonet-addr is required")
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
+	if *echonetAddr == "" {
+		if err := PrintECHONETDiscovery(ctx, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if err := NewECHONETScanner(*echonetAddr).Print(ctx, os.Stdout); err != nil {
 		log.Fatal(err)
 	}
@@ -77,7 +79,11 @@ func buildSource(kind, sourceURL, echonetAddr, echonetFields string) (Source, er
 		return NewHTTPJSONSource(sourceURL), nil
 	case "echonet":
 		if echonetAddr == "" {
-			return nil, errors.New("-echonet-addr is required for echonet")
+			discovered, err := discoverFirstECHONETAddr(context.Background(), 3*time.Second)
+			if err != nil {
+				return nil, err
+			}
+			echonetAddr = discovered
 		}
 		fields, err := parseECHONETFields(echonetFields)
 		if err != nil {
@@ -87,4 +93,17 @@ func buildSource(kind, sourceURL, echonetAddr, echonetFields string) (Source, er
 	default:
 		return nil, fmt.Errorf("unknown source %q", kind)
 	}
+}
+
+func discoverFirstECHONETAddr(parent context.Context, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	nodes, err := DiscoverECHONETNodes(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(nodes) == 0 {
+		return "", errors.New("no ECHONET Lite nodes found; use -echonet-addr to specify one")
+	}
+	return nodes[0].Addr, nil
 }
