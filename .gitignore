@@ -1,0 +1,15 @@
+# Local runtime data
+data/
+*.csv
+
+# Built binaries
+solar-monitor
+solar-monitor.exe
+
+# Temporary local attachments and inspection files
+photos/
+
+# Editor and OS files
+.DS_Store
+*.swp
+*.tmp
