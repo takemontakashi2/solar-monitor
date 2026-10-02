@@ -12,7 +12,10 @@ const indexHTML = `<!doctype html>
     main { max-width: 1120px; margin: 0 auto; padding: 24px; }
     header { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 20px; }
     h1 { font-size: clamp(28px, 5vw, 56px); margin: 0; letter-spacing: 0; }
+    .header-actions { display: flex; align-items: center; gap: 12px; }
     .time { color: #62675e; font-size: 14px; }
+    .icon-button { border: 1px solid #cfd6c6; background: #ffffff; color: #20231f; border-radius: 8px; padding: 8px 10px; font-size: 18px; line-height: 1; cursor: pointer; }
+    .icon-button[aria-pressed="true"] { background: #e8efe0; border-color: #9dad8d; }
     .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
     .card { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 16px; min-height: 100px; }
     .label { color: #62675e; font-size: 13px; overflow-wrap: anywhere; }
@@ -22,6 +25,7 @@ const indexHTML = `<!doctype html>
     canvas { width: 100%; height: 360px; display: block; }
     .panel { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 16px; margin-bottom: 18px; }
     .panel h2 { font-size: 18px; margin: 0 0 12px; }
+    .panel[hidden] { display: none; }
     .prop-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
     .prop-value { font-size: 24px; font-weight: 720; margin-top: 8px; line-height: 1.15; overflow-wrap: anywhere; }
     .prop-key { color: #62675e; font-size: 12px; margin-top: 8px; }
@@ -33,15 +37,15 @@ const indexHTML = `<!doctype html>
     .choice { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; font-size: 13px; line-height: 1.35; }
     .choice input { margin-top: 2px; }
     .choice small { color: #62675e; display: block; overflow-wrap: anywhere; }
-    @media (max-width: 900px) { .grid, .prop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .chooser { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-    @media (max-width: 760px) { main { padding: 14px; } header { align-items: start; flex-direction: column; } canvas { height: 300px; } .chooser { grid-template-columns: 1fr; } }
+    @media (max-width: 900px) { .grid, .prop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 760px) { main { padding: 14px; } header { align-items: start; flex-direction: column; } canvas { height: 300px; } .choice-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
 <main>
   <header>
     <h1>Solar Monitor</h1>
-    <div class="time" id="updated">--</div>
+    <div class="header-actions"><div class="time" id="updated">--</div><button class="icon-button" id="settingsButton" type="button" aria-label="表示設定" aria-pressed="false">⚙</button></div>
   </header>
   <section class="grid">
     <div class="card"><div class="label">発電</div><div class="value"><span id="pv">--</span><span class="unit">kW</span></div></div>
@@ -51,7 +55,7 @@ const indexHTML = `<!doctype html>
   </section>
   <section class="prop-grid" id="selectedProps"></section>
   <section class="chart"><canvas id="chart"></canvas></section>
-  <section class="panel">
+  <section class="panel" id="settingsPanel" hidden>
     <h2>表示する値</h2>
     <div class="chooser" id="propertyChooser"></div>
   </section>
@@ -59,14 +63,20 @@ const indexHTML = `<!doctype html>
 <script>
 const $ = (id) => document.getElementById(id);
 const storageKey = 'solar-monitor.selected-properties';
+const settingsOpenKey = 'solar-monitor.settings-open';
 const defaultSelected = ['027901:e0', '027901:e1', '027d01:e4', '027d01:cf', '027d01:da'];
 let selected = new Set(JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultSelected);
+let settingsOpen = localStorage.getItem(settingsOpenKey) === 'true';
 const has = (v) => typeof v === 'number' && Number.isFinite(v);
 const fmtKW = (w) => has(w) ? (w / 1000).toFixed(2) : '--';
 const fmtKWh = (v) => has(v) ? v.toFixed(1) : '--';
 const keyOf = (p) => p.eoj + ':' + p.epc;
 const labelOf = (p) => p.name || keyOf(p);
 const deviceName = (eoj) => ({'05ff01':'コントローラ', '027901':'太陽光発電', '027d01':'蓄電池'})[eoj] || eoj;
+function applySettingsVisibility() {
+  $('settingsPanel').hidden = !settingsOpen;
+  $('settingsButton').setAttribute('aria-pressed', String(settingsOpen));
+}
 function saveSelected() {
   localStorage.setItem(storageKey, JSON.stringify([...selected]));
 }
@@ -156,6 +166,12 @@ function line(samples, key, color, max, rect, pad, abs) {
   });
   ctx.stroke();
 }
+$('settingsButton').addEventListener('click', () => {
+  settingsOpen = !settingsOpen;
+  localStorage.setItem(settingsOpenKey, String(settingsOpen));
+  applySettingsVisibility();
+});
+applySettingsVisibility();
 refresh();
 setInterval(refresh, 30000);
 </script>
