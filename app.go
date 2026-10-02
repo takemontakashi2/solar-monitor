@@ -57,6 +57,7 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("/", a.handleIndex)
 	mux.HandleFunc("/api/latest", a.handleLatest)
 	mux.HandleFunc("/api/samples", a.handleSamples)
+	mux.HandleFunc("/api/properties", a.handleProperties)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
@@ -91,6 +92,25 @@ func (a *App) handleSamples(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, samples)
+}
+
+func (a *App) handleProperties(w http.ResponseWriter, r *http.Request) {
+	limit := 1
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	samples, err := a.store.Latest(limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	props := []SampleProperty{}
+	for _, sample := range samples {
+		props = append(props, sample.Properties...)
+	}
+	writeJSON(w, props)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

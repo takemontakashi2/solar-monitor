@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -11,9 +12,11 @@ import (
 )
 
 type ECHONETSource struct {
-	addr   string
-	fields map[string]ECHONETProperty
-	tid    uint16
+	addr            string
+	fields          map[string]ECHONETProperty
+	tid             uint16
+	fullScan        bool
+	initialScanDone bool
 }
 
 type ECHONETProperty struct {
@@ -22,72 +25,188 @@ type ECHONETProperty struct {
 	Scale float64
 }
 
-func NewECHONETSource(addr string, fields map[string]ECHONETProperty) *ECHONETSource {
-	return &ECHONETSource{addr: net.JoinHostPort(addr, "3610"), fields: fields, tid: uint16(time.Now().UnixNano())}
+func NewECHONETSource(addr string, fields map[string]ECHONETProperty, fullScan bool) *ECHONETSource {
+	return &ECHONETSource{addr: net.JoinHostPort(addr, "3610"), fields: fields, tid: uint16(time.Now().UnixNano()), fullScan: fullScan}
 }
 
 func (s *ECHONETSource) Read(ctx context.Context) (Sample, error) {
-	result := Sample{Time: time.Now(), Source: "echonet"}
-	for name, prop := range s.fields {
-		value, err := s.readProperty(ctx, prop, name == "grid")
-		if err != nil {
-			return Sample{}, fmt.Errorf("%s: %w", name, err)
-		}
-		switch name {
-		case "pv":
-			result.PVWatts = value
-		case "load":
-			result.LoadWatts = value
-		case "grid":
-			result.GridWatts = value
-		case "today":
-			result.TodayKWh = value
-		}
+	now := time.Now()
+	result := Sample{Time: now, Source: "echonet"}
+	useFullScan := s.fullScan || !s.initialScanDone
+	properties, err := s.readAllProperties(ctx, now, useFullScan)
+	if err != nil {
+		return Sample{}, err
+	}
+	result.Properties = properties
+	s.initialScanDone = true
+	for _, prop := range properties {
+		s.applyKnownProperty(&result, prop)
 	}
 	return result, nil
 }
 
-func (s *ECHONETSource) readProperty(ctx context.Context, prop ECHONETProperty, signed bool) (float64, error) {
-	conn, err := net.ListenPacket("udp4", ":3610")
+func (s *ECHONETSource) readAllProperties(ctx context.Context, t time.Time, fullScan bool) ([]SampleProperty, error) {
+	conn, udpAddr, err := s.openConn()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer conn.Close()
+
+	objects, err := s.readObjects(ctx, conn, udpAddr)
+	if err != nil {
+		return nil, err
+	}
+	props := []SampleProperty{}
+	for _, object := range objects {
+		propertyMap, err := s.readPropertyMap(ctx, conn, udpAddr, object)
+		if err != nil {
+			continue
+		}
+		batchSize := 10
+		if fullScan {
+			batchSize = 1
+		}
+		for _, batch := range propertyBatches(propertyMap, batchSize) {
+			values, err := s.readRawProperties(ctx, conn, udpAddr, object, batch)
+			if err != nil {
+				continue
+			}
+			for _, epc := range batch {
+				data, ok := values[epc]
+				if !ok {
+					continue
+				}
+				props = append(props, makeSampleProperty(t, object, epc, data))
+			}
+		}
+	}
+	return props, nil
+}
+
+func (s *ECHONETSource) openConn() (net.PacketConn, *net.UDPAddr, error) {
+	conn, err := net.ListenPacket("udp4", ":3610")
+	if err != nil {
+		return nil, nil, err
+	}
 	udpAddr, err := net.ResolveUDPAddr("udp4", s.addr)
 	if err != nil {
-		return 0, err
+		_ = conn.Close()
+		return nil, nil, err
 	}
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	} else {
-		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	return conn, udpAddr, nil
+}
+
+func (s *ECHONETSource) readObjects(ctx context.Context, conn net.PacketConn, addr *net.UDPAddr) ([][3]byte, error) {
+	data, err := s.readRawProperty(ctx, conn, addr, [3]byte{0x0e, 0xf0, 0x01}, 0xd6)
+	if err != nil {
+		return nil, err
 	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty instance list")
+	}
+	objects := make([][3]byte, 0, int(data[0]))
+	for i := 0; i < int(data[0]); i++ {
+		pos := 1 + i*3
+		if pos+3 > len(data) {
+			return nil, fmt.Errorf("truncated instance list")
+		}
+		objects = append(objects, [3]byte{data[pos], data[pos+1], data[pos+2]})
+	}
+	return objects, nil
+}
+
+func (s *ECHONETSource) readPropertyMap(ctx context.Context, conn net.PacketConn, addr *net.UDPAddr, eoj [3]byte) ([]byte, error) {
+	data, err := s.readRawProperty(ctx, conn, addr, eoj, 0x9f)
+	if err != nil {
+		return nil, err
+	}
+	return parseECHONETPropertyMap(data)
+}
+
+func (s *ECHONETSource) readRawProperty(ctx context.Context, conn net.PacketConn, addr *net.UDPAddr, eoj [3]byte, epc byte) ([]byte, error) {
+	values, err := s.readRawProperties(ctx, conn, addr, eoj, []byte{epc})
+	if err != nil {
+		return nil, err
+	}
+	data, ok := values[epc]
+	if !ok {
+		return nil, fmt.Errorf("EPC 0x%02x not found", epc)
+	}
+	return data, nil
+}
+
+func (s *ECHONETSource) readRawProperties(ctx context.Context, conn net.PacketConn, addr *net.UDPAddr, eoj [3]byte, epcs []byte) (map[byte][]byte, error) {
+	deadline := time.Now().Add(1200 * time.Millisecond)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	_ = conn.SetDeadline(deadline)
 
 	s.tid++
 	req := []byte{
 		0x10, 0x81, byte(s.tid >> 8), byte(s.tid),
 		0x05, 0xff, 0x01,
-		prop.EOJ[0], prop.EOJ[1], prop.EOJ[2],
+		eoj[0], eoj[1], eoj[2],
 		0x62,
-		0x01,
-		prop.EPC, 0x00,
+		byte(len(epcs)),
 	}
-	if _, err := conn.WriteTo(req, udpAddr); err != nil {
-		return 0, err
+	for _, epc := range epcs {
+		req = append(req, epc, 0x00)
+	}
+	if _, err := conn.WriteTo(req, addr); err != nil {
+		return nil, err
 	}
 	buf := make([]byte, 1500)
-	n, _, err := conn.ReadFrom(buf)
-	if err != nil {
-		return 0, err
+	for {
+		n, _, err := conn.ReadFrom(buf)
+		if err != nil {
+			return nil, err
+		}
+		values, err := echonetPropertiesDataFor(buf[:n], eoj)
+		if err == nil {
+			return values, nil
+		}
 	}
-	data, err := echonetPropertyData(buf[:n], prop.EPC)
-	if err != nil {
-		return 0, err
+}
+
+func (s *ECHONETSource) applyKnownProperty(sample *Sample, prop SampleProperty) {
+	if prop.Float == nil {
+		return
 	}
-	if signed {
-		return float64(signedBE(data)) * prop.Scale, nil
+	key := strings.ToLower(prop.EOJ + ":" + prop.EPC)
+	for name, configured := range s.fields {
+		if strings.ToLower(formatEOJ(configured.EOJ)+":"+fmt.Sprintf("%02x", configured.EPC)) != key {
+			continue
+		}
+		value := *prop.Float * configured.Scale
+		switch name {
+		case "pv":
+			sample.PVWatts = value
+		case "load":
+			sample.LoadWatts = value
+		case "grid":
+			sample.GridWatts = value
+		case "today":
+			sample.TodayKWh = value
+		}
 	}
-	return float64(unsignedBE(data)) * prop.Scale, nil
+}
+
+func makeSampleProperty(t time.Time, eoj [3]byte, epc byte, data []byte) SampleProperty {
+	unsigned := unsignedBE(data)
+	signed := signedBE(data)
+	float := float64(unsigned)
+	return SampleProperty{
+		Time:        t,
+		EOJ:         formatEOJ(eoj),
+		EPC:         fmt.Sprintf("%02x", epc),
+		Name:        echonetPropertyName(eoj, epc),
+		Raw:         hex.EncodeToString(data),
+		Unsigned:    &unsigned,
+		Signed:      &signed,
+		Float:       &float,
+		Description: describeECHONETValue(eoj, epc, data),
+	}
 }
 
 func echonetPropertyData(packet []byte, epc byte) ([]byte, error) {
@@ -189,4 +308,64 @@ func parseHexBytes(raw string, want int) ([]byte, error) {
 		out[i] = byte(n)
 	}
 	return out, nil
+}
+
+func propertyBatches(props []byte, size int) [][]byte {
+	filtered := []byte{}
+	for _, prop := range props {
+		if prop == 0x9d || prop == 0x9e || prop == 0x9f {
+			continue
+		}
+		filtered = append(filtered, prop)
+	}
+	batches := [][]byte{}
+	for len(filtered) > 0 {
+		n := size
+		if len(filtered) < n {
+			n = len(filtered)
+		}
+		batch := make([]byte, n)
+		copy(batch, filtered[:n])
+		batches = append(batches, batch)
+		filtered = filtered[n:]
+	}
+	return batches
+}
+
+func echonetPropertiesData(packet []byte) (map[byte][]byte, error) {
+	if len(packet) < 12 || packet[0] != 0x10 || packet[1] != 0x81 {
+		return nil, errors.New("invalid ECHONET Lite packet")
+	}
+	if packet[10] != 0x72 {
+		return nil, fmt.Errorf("unexpected ESV 0x%02x", packet[10])
+	}
+	opc := int(packet[11])
+	pos := 12
+	values := map[byte][]byte{}
+	for i := 0; i < opc; i++ {
+		if pos+2 > len(packet) {
+			return nil, errors.New("truncated property header")
+		}
+		epc := packet[pos]
+		pdc := int(packet[pos+1])
+		pos += 2
+		if pos+pdc > len(packet) {
+			return nil, errors.New("truncated property data")
+		}
+		data := make([]byte, pdc)
+		copy(data, packet[pos:pos+pdc])
+		values[epc] = data
+		pos += pdc
+	}
+	return values, nil
+}
+
+func echonetPropertiesDataFor(packet []byte, eoj [3]byte) (map[byte][]byte, error) {
+	if len(packet) < 12 {
+		return nil, errors.New("invalid ECHONET Lite packet")
+	}
+	if packet[4] != eoj[0] || packet[5] != eoj[1] || packet[6] != eoj[2] {
+		return nil, fmt.Errorf("unexpected SEOJ %02x%02x%02x", packet[4], packet[5], packet[6])
+	}
+	return echonetPropertiesData(packet)
 }

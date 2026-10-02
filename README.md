@@ -103,6 +103,12 @@ git push -u origin main
 ./solar-monitor -source echonet
 ```
 
+起動後の初回収集は、取得できるプロパティをできるだけ拾うためにフルスキャンします。通常運用では2回目以降は高速なバッチ取得になります。毎回フルスキャンしたい場合は以下です。
+
+```sh
+./solar-monitor -source echonet -full-scan
+```
+
 ECHONET Lite はUDP `3610` を使います。端末側のファイアウォールでUDP通信が止まっている場合は許可してください。
 
 初期設定では以下のプロパティを読みに行きます。

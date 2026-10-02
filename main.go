@@ -28,6 +28,7 @@ func runServer(args []string) {
 	sourceURL := fs.String("source-url", "", "HTTP JSON source URL")
 	echonetAddr := fs.String("echonet-addr", "", "ECHONET Lite target IPv4 address")
 	echonetFields := fs.String("echonet-fields", "pv=027901:e0,today=027901:e1:0.001", "ECHONET fields: name=EOJ:EPC[:scale], comma-separated")
+	fullScan := fs.Bool("full-scan", false, "run a full ECHONET property scan on every collection")
 	_ = fs.Parse(args)
 
 	store, err := NewStore(*data)
@@ -36,7 +37,7 @@ func runServer(args []string) {
 	}
 	defer store.Close()
 
-	source, err := buildSource(*sourceKind, *sourceURL, *echonetAddr, *echonetFields)
+	source, err := buildSource(*sourceKind, *sourceURL, *echonetAddr, *echonetFields, *fullScan)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -81,7 +82,7 @@ func runScan(args []string) {
 	}
 }
 
-func buildSource(kind, sourceURL, echonetAddr, echonetFields string) (Source, error) {
+func buildSource(kind, sourceURL, echonetAddr, echonetFields string, fullScan bool) (Source, error) {
 	switch kind {
 	case "mock":
 		return NewMockSource(), nil
@@ -102,7 +103,7 @@ func buildSource(kind, sourceURL, echonetAddr, echonetFields string) (Source, er
 		if err != nil {
 			return nil, err
 		}
-		return NewECHONETSource(echonetAddr, fields), nil
+		return NewECHONETSource(echonetAddr, fields, fullScan), nil
 	default:
 		return nil, fmt.Errorf("unknown source %q", kind)
 	}
