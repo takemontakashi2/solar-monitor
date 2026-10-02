@@ -310,6 +310,15 @@ func DumpRawECHONETTarget(ctx context.Context, w io.Writer, addr string) error {
 		{label: "node get property map", eoj: [3]byte{0x0e, 0xf0, 0x01}, epc: 0x9f},
 		{label: "solar get property map", eoj: [3]byte{0x02, 0x79, 0x01}, epc: 0x9f},
 		{label: "battery get property map", eoj: [3]byte{0x02, 0x7d, 0x01}, epc: 0x9f},
+		{label: "battery operation status", eoj: [3]byte{0x02, 0x7d, 0x01}, epc: 0x80},
+		{label: "battery operation mode status", eoj: [3]byte{0x02, 0x7d, 0x01}, epc: 0xcf},
+		{label: "battery operation mode setting", eoj: [3]byte{0x02, 0x7d, 0x01}, epc: 0xda},
+		{label: "battery remaining capacity 1", eoj: [3]byte{0x02, 0x7d, 0x01}, epc: 0xe2},
+		{label: "battery remaining capacity 2", eoj: [3]byte{0x02, 0x7d, 0x01}, epc: 0xe3},
+		{label: "battery remaining capacity 3", eoj: [3]byte{0x02, 0x7d, 0x01}, epc: 0xe4},
+		{label: "battery type", eoj: [3]byte{0x02, 0x7d, 0x01}, epc: 0xe6},
+		{label: "battery charge power setting", eoj: [3]byte{0x02, 0x7d, 0x01}, epc: 0xeb},
+		{label: "battery discharge power setting", eoj: [3]byte{0x02, 0x7d, 0x01}, epc: 0xec},
 		{label: "meter get property map", eoj: [3]byte{0x02, 0x88, 0x01}, epc: 0x9f},
 	}
 	for _, target := range targets {
