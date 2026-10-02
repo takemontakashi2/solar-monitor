@@ -27,6 +27,23 @@ type SampleProperty struct {
 	Description string    `json:"description,omitempty"`
 }
 
+type PropertyStat struct {
+	EOJ               string    `json:"eoj"`
+	EPC               string    `json:"epc"`
+	Name              string    `json:"name,omitempty"`
+	Count             int       `json:"count"`
+	FirstTime         time.Time `json:"first_time"`
+	LatestTime        time.Time `json:"latest_time"`
+	First             *float64  `json:"first,omitempty"`
+	Latest            *float64  `json:"latest,omitempty"`
+	Min               *float64  `json:"min,omitempty"`
+	Max               *float64  `json:"max,omitempty"`
+	Delta             *float64  `json:"delta,omitempty"`
+	Range             *float64  `json:"range,omitempty"`
+	LatestRaw         string    `json:"latest_raw"`
+	LatestDescription string    `json:"latest_description,omitempty"`
+}
+
 type Source interface {
 	Read(ctx context.Context) (Sample, error)
 }

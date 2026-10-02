@@ -37,6 +37,15 @@ const indexHTML = `<!doctype html>
     .choice { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; font-size: 13px; line-height: 1.35; }
     .choice input { margin-top: 2px; }
     .choice small { color: #62675e; display: block; overflow-wrap: anywhere; }
+    .stats { margin-top: 18px; border-top: 1px solid #e4e8dd; padding-top: 14px; }
+    .stats-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 8px; }
+    .stats-head h3 { font-size: 16px; margin: 0; }
+    .stats-note { color: #62675e; font-size: 12px; }
+    .stats-table-wrap { overflow-x: auto; }
+    .stats-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 760px; }
+    .stats-table th, .stats-table td { border-bottom: 1px solid #e4e8dd; padding: 8px 6px; text-align: right; white-space: nowrap; }
+    .stats-table th:first-child, .stats-table td:first-child, .stats-table th:nth-child(2), .stats-table td:nth-child(2) { text-align: left; }
+    .stats-table tbody tr:hover { background: #f7f9f4; }
     @media (max-width: 900px) { .grid, .prop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media (max-width: 760px) { main { padding: 14px; } header { align-items: start; flex-direction: column; } canvas { height: 300px; } .choice-grid { grid-template-columns: 1fr; } }
   </style>
@@ -58,6 +67,18 @@ const indexHTML = `<!doctype html>
   <section class="panel" id="settingsPanel" hidden>
     <h2>表示する値</h2>
     <div class="chooser" id="propertyChooser"></div>
+    <div class="stats">
+      <div class="stats-head">
+        <h3>候補診断</h3>
+        <div class="stats-note">直近データの変化量が大きい順</div>
+      </div>
+      <div class="stats-table-wrap">
+        <table class="stats-table">
+          <thead><tr><th>機器</th><th>EPC</th><th>最新</th><th>最小</th><th>最大</th><th>変化</th><th>幅</th><th>回数</th></tr></thead>
+          <tbody id="propertyStats"><tr><td colspan="8">--</td></tr></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 </main>
 <script>
@@ -70,6 +91,7 @@ let settingsOpen = localStorage.getItem(settingsOpenKey) === 'true';
 const has = (v) => typeof v === 'number' && Number.isFinite(v);
 const fmtKW = (w) => has(w) ? (w / 1000).toFixed(2) : '--';
 const fmtKWh = (v) => has(v) ? v.toFixed(1) : '--';
+const fmtStat = (v) => has(v) ? String(Math.round(v * 1000) / 1000) : '--';
 const keyOf = (p) => p.eoj + ':' + p.epc;
 const labelOf = (p) => p.name || keyOf(p);
 const deviceName = (eoj) => ({'05ff01':'コントローラ', '027901':'太陽光発電', '027d01':'蓄電池'})[eoj] || eoj;
@@ -97,7 +119,13 @@ async function refresh() {
   $('today').textContent = fmtKWh(latest.today_kwh);
   $('updated').textContent = new Date(latest.time).toLocaleString();
   renderProperties(latest.properties || []);
+  if (settingsOpen) refreshStats();
   draw(samples);
+}
+async function refreshStats() {
+  const res = await fetch('/api/property-stats?limit=1440', {cache: 'no-store'});
+  const stats = await res.json();
+  renderStats(stats || []);
 }
 function renderProperties(properties) {
   const byKey = new Map(properties.map(p => [keyOf(p), p]));
@@ -115,6 +143,14 @@ function renderProperties(properties) {
       renderProperties(properties);
     });
   });
+}
+function renderStats(stats) {
+  const rows = stats.slice(0, 80).map(stat => {
+    const label = stat.name || deviceName(stat.eoj);
+    const latest = stat.latest_description || fmtStat(stat.latest);
+    return '<tr><td>' + escapeHTML(deviceName(stat.eoj)) + '</td><td>' + escapeHTML(stat.epc) + '<br><small>' + escapeHTML(label) + '</small></td><td>' + escapeHTML(latest) + '</td><td>' + escapeHTML(fmtStat(stat.min)) + '</td><td>' + escapeHTML(fmtStat(stat.max)) + '</td><td>' + escapeHTML(fmtStat(stat.delta)) + '</td><td>' + escapeHTML(fmtStat(stat.range)) + '</td><td>' + escapeHTML(stat.count) + '</td></tr>';
+  }).join('');
+  $('propertyStats').innerHTML = rows || '<tr><td colspan="8">データなし</td></tr>';
 }
 function groupByDevice(properties) {
   const map = new Map();
@@ -170,6 +206,7 @@ $('settingsButton').addEventListener('click', () => {
   settingsOpen = !settingsOpen;
   localStorage.setItem(settingsOpenKey, String(settingsOpen));
   applySettingsVisibility();
+  if (settingsOpen) refreshStats();
 });
 applySettingsVisibility();
 refresh();

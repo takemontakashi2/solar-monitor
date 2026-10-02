@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -224,6 +225,97 @@ func (s *Store) propertiesForSample(sampleID int64) ([]SampleProperty, error) {
 	return props, rows.Err()
 }
 
+func (s *Store) PropertyStats(limit int) ([]PropertyStat, error) {
+	rows, err := s.db.Query(`
+		WITH latest_samples AS (
+			SELECT id
+			FROM samples
+			ORDER BY time DESC, id DESC
+			LIMIT ?
+		)
+		SELECT time, eoj, epc, name, raw, float_value, description
+		FROM properties
+		WHERE sample_id IN (SELECT id FROM latest_samples)
+		ORDER BY time ASC, eoj ASC, epc ASC
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byKey := map[string]*PropertyStat{}
+	for rows.Next() {
+		var rawTime string
+		var eoj, epc, name, raw, description string
+		var value sql.NullFloat64
+		if err := rows.Scan(&rawTime, &eoj, &epc, &name, &raw, &value, &description); err != nil {
+			return nil, err
+		}
+		t, err := time.Parse(time.RFC3339Nano, rawTime)
+		if err != nil {
+			return nil, err
+		}
+		key := eoj + ":" + epc
+		stat, ok := byKey[key]
+		if !ok {
+			stat = &PropertyStat{
+				EOJ:               eoj,
+				EPC:               epc,
+				Name:              name,
+				FirstTime:         t,
+				LatestTime:        t,
+				LatestRaw:         raw,
+				LatestDescription: description,
+			}
+			byKey[key] = stat
+		}
+		stat.Count++
+		stat.Name = name
+		stat.LatestTime = t
+		stat.LatestRaw = raw
+		stat.LatestDescription = description
+		if !value.Valid {
+			continue
+		}
+		v := value.Float64
+		if stat.First == nil {
+			stat.First = floatPtr(v)
+		}
+		stat.Latest = floatPtr(v)
+		if stat.Min == nil || v < *stat.Min {
+			stat.Min = floatPtr(v)
+		}
+		if stat.Max == nil || v > *stat.Max {
+			stat.Max = floatPtr(v)
+		}
+		if stat.First != nil && stat.Latest != nil {
+			stat.Delta = floatPtr(*stat.Latest - *stat.First)
+		}
+		if stat.Min != nil && stat.Max != nil {
+			stat.Range = floatPtr(*stat.Max - *stat.Min)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	stats := make([]PropertyStat, 0, len(byKey))
+	for _, stat := range byKey {
+		stats = append(stats, *stat)
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		leftRange := valueOf(stats[i].Range)
+		rightRange := valueOf(stats[j].Range)
+		if leftRange != rightRange {
+			return leftRange > rightRange
+		}
+		if stats[i].EOJ != stats[j].EOJ {
+			return stats[i].EOJ < stats[j].EOJ
+		}
+		return stats[i].EPC < stats[j].EPC
+	})
+	return stats, nil
+}
+
 func nullUint64(v *uint64) any {
 	if v == nil {
 		return nil
@@ -246,6 +338,13 @@ func nullFloat64(v *float64) any {
 }
 
 func valueOrZero(v *float64) float64 {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+func valueOf(v *float64) float64 {
 	if v == nil {
 		return 0
 	}
