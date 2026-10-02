@@ -25,7 +25,11 @@ const indexHTML = `<!doctype html>
     .prop-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
     .prop-value { font-size: 24px; font-weight: 720; margin-top: 8px; line-height: 1.15; overflow-wrap: anywhere; }
     .prop-key { color: #62675e; font-size: 12px; margin-top: 8px; }
-    .chooser { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 14px; max-height: 280px; overflow: auto; padding-right: 4px; }
+    .chooser { display: grid; gap: 14px; max-height: 320px; overflow: auto; padding-right: 4px; }
+    .device-group { border-top: 1px solid #e4e8dd; padding-top: 12px; }
+    .device-group:first-child { border-top: 0; padding-top: 0; }
+    .device-title { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+    .choice-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 14px; }
     .choice { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; font-size: 13px; line-height: 1.35; }
     .choice input { margin-top: 2px; }
     .choice small { color: #62675e; display: block; overflow-wrap: anywhere; }
@@ -62,6 +66,7 @@ const fmtKW = (w) => has(w) ? (w / 1000).toFixed(2) : '--';
 const fmtKWh = (v) => has(v) ? v.toFixed(1) : '--';
 const keyOf = (p) => p.eoj + ':' + p.epc;
 const labelOf = (p) => p.name || keyOf(p);
+const deviceName = (eoj) => ({'05ff01':'コントローラ', '027901':'太陽光発電', '027d01':'蓄電池'})[eoj] || eoj;
 function saveSelected() {
   localStorage.setItem(storageKey, JSON.stringify([...selected]));
 }
@@ -86,12 +91,13 @@ async function refresh() {
 }
 function renderProperties(properties) {
   const byKey = new Map(properties.map(p => [keyOf(p), p]));
-  const selectedProps = [...selected].map(k => byKey.get(k)).filter(Boolean);
+  const selectedProps = properties.filter(p => selected.has(keyOf(p)));
   $('selectedProps').innerHTML = selectedProps.map(p => '<div class="card"><div class="label">' + escapeHTML(labelOf(p)) + '</div><div class="prop-value">' + escapeHTML(displayValue(p)) + '</div><div class="prop-key">' + escapeHTML(keyOf(p)) + '</div></div>').join('');
-  $('propertyChooser').innerHTML = properties.map(p => {
+  const groups = groupByDevice(properties);
+  $('propertyChooser').innerHTML = groups.map(group => '<div class="device-group"><div class="device-title">' + escapeHTML(deviceName(group.eoj)) + ' <small>' + escapeHTML(group.eoj) + '</small></div><div class="choice-grid">' + group.items.map(p => {
     const key = keyOf(p);
-    return '<label class="choice"><input type="checkbox" data-key="' + escapeHTML(key) + '" ' + (selected.has(key) ? 'checked' : '') + '><span>' + escapeHTML(labelOf(p)) + '<small>' + escapeHTML(key) + ' ' + escapeHTML(displayValue(p)) + '</small></span></label>';
-  }).join('');
+    return '<label class="choice"><input type="checkbox" data-key="' + escapeHTML(key) + '" ' + (selected.has(key) ? 'checked' : '') + '><span>' + escapeHTML(labelOf(p)) + '<small>' + escapeHTML(p.epc) + ' ' + escapeHTML(displayValue(p)) + '</small></span></label>';
+  }).join('') + '</div></div>').join('');
   $('propertyChooser').querySelectorAll('input').forEach(input => {
     input.addEventListener('change', () => {
       if (input.checked) selected.add(input.dataset.key); else selected.delete(input.dataset.key);
@@ -99,6 +105,14 @@ function renderProperties(properties) {
       renderProperties(properties);
     });
   });
+}
+function groupByDevice(properties) {
+  const map = new Map();
+  properties.forEach(p => {
+    if (!map.has(p.eoj)) map.set(p.eoj, []);
+    map.get(p.eoj).push(p);
+  });
+  return [...map.entries()].map(([eoj, items]) => ({eoj, items}));
 }
 function escapeHTML(value) {
   return String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
