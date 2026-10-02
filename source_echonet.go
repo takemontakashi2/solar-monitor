@@ -181,13 +181,13 @@ func (s *ECHONETSource) applyKnownProperty(sample *Sample, prop SampleProperty) 
 		value := *prop.Float * configured.Scale
 		switch name {
 		case "pv":
-			sample.PVWatts = value
+			sample.PVWatts = floatPtr(value)
 		case "load":
-			sample.LoadWatts = value
+			sample.LoadWatts = floatPtr(value)
 		case "grid":
-			sample.GridWatts = value
+			sample.GridWatts = floatPtr(value)
 		case "today":
-			sample.TodayKWh = value
+			sample.TodayKWh = floatPtr(value)
 		}
 	}
 }

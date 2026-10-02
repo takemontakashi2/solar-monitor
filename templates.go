@@ -39,7 +39,9 @@ const indexHTML = `<!doctype html>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-const fmtKW = (w) => (w / 1000).toFixed(2);
+const has = (v) => typeof v === 'number' && Number.isFinite(v);
+const fmtKW = (w) => has(w) ? (w / 1000).toFixed(2) : '--';
+const fmtKWh = (v) => has(v) ? v.toFixed(1) : '--';
 async function refresh() {
   const res = await fetch('/api/samples?limit=288', {cache: 'no-store'});
   const samples = await res.json();
@@ -62,7 +64,8 @@ function draw(samples) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, rect.width, rect.height);
   const pad = 36;
-  const max = Math.max(1000, ...samples.flatMap(s => [s.pv_watts, s.load_watts, Math.abs(s.grid_watts)]));
+  const values = samples.flatMap(s => [s.pv_watts, s.load_watts, has(s.grid_watts) ? Math.abs(s.grid_watts) : null]).filter(has);
+  const max = Math.max(1000, ...values);
   ctx.strokeStyle = '#d8ddd0';
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
@@ -81,7 +84,9 @@ function line(samples, key, color, max, rect, pad, abs) {
   ctx.beginPath();
   samples.forEach((s, i) => {
     const x = pad + (rect.width - pad * 2) * i / (samples.length - 1);
-    const val = abs ? Math.abs(s[key]) : s[key];
+    const raw = s[key];
+    if (!has(raw)) return;
+    const val = abs ? Math.abs(raw) : raw;
     const y = rect.height - pad - (rect.height - pad * 2) * val / max;
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });

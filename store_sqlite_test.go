@@ -17,10 +17,10 @@ func TestStoreAppendAndLatest(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		err := store.Append(Sample{
 			Time:      base.Add(time.Duration(i) * time.Minute),
-			PVWatts:   float64(1000 + i),
-			LoadWatts: float64(500 + i),
-			GridWatts: float64(-100 - i),
-			TodayKWh:  float64(10 + i),
+			PVWatts:   floatPtr(float64(1000 + i)),
+			LoadWatts: floatPtr(float64(500 + i)),
+			GridWatts: floatPtr(float64(-100 - i)),
+			TodayKWh:  floatPtr(float64(10 + i)),
 			Source:    "test",
 		})
 		if err != nil {
@@ -35,7 +35,7 @@ func TestStoreAppendAndLatest(t *testing.T) {
 	if len(samples) != 2 {
 		t.Fatalf("got %d samples, want 2", len(samples))
 	}
-	if samples[0].PVWatts != 1001 || samples[1].PVWatts != 1002 {
+	if samples[0].PVWatts == nil || samples[1].PVWatts == nil || *samples[0].PVWatts != 1001 || *samples[1].PVWatts != 1002 {
 		t.Fatalf("samples not returned oldest-to-newest within limit: %#v", samples)
 	}
 }

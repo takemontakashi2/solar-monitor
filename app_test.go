@@ -27,10 +27,10 @@ func TestAppSamplesAPI(t *testing.T) {
 
 	app := NewApp(store, staticSource{sample: Sample{
 		Time:      time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC),
-		PVWatts:   3200,
-		LoadWatts: 900,
-		GridWatts: -2300,
-		TodayKWh:  18.4,
+		PVWatts:   floatPtr(3200),
+		LoadWatts: floatPtr(900),
+		GridWatts: floatPtr(-2300),
+		TodayKWh:  floatPtr(18.4),
 		Source:    "test",
 	}})
 	app.CollectOnce(context.Background())
@@ -45,7 +45,7 @@ func TestAppSamplesAPI(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&samples); err != nil {
 		t.Fatal(err)
 	}
-	if len(samples) != 1 || samples[0].PVWatts != 3200 {
+	if len(samples) != 1 || samples[0].PVWatts == nil || *samples[0].PVWatts != 3200 {
 		t.Fatalf("unexpected samples: %#v", samples)
 	}
 }

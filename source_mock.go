@@ -26,5 +26,5 @@ func (m *MockSource) Read(_ context.Context) (Sample, error) {
 	load := 450 + m.rand.Float64()*900
 	grid := load - pv
 	today := daylight * 24
-	return Sample{Time: now, PVWatts: pv, LoadWatts: load, GridWatts: grid, TodayKWh: today, Source: "mock"}, nil
+	return Sample{Time: now, PVWatts: floatPtr(pv), LoadWatts: floatPtr(load), GridWatts: floatPtr(grid), TodayKWh: floatPtr(today), Source: "mock"}, nil
 }

@@ -80,10 +80,10 @@ func (s *Store) Append(sample Sample) error {
 		VALUES (?, ?, ?, ?, ?, ?)
 	`,
 		sample.Time.Format(time.RFC3339Nano),
-		sample.PVWatts,
-		sample.LoadWatts,
-		sample.GridWatts,
-		sample.TodayKWh,
+		valueOrZero(sample.PVWatts),
+		valueOrZero(sample.LoadWatts),
+		valueOrZero(sample.GridWatts),
+		valueOrZero(sample.TodayKWh),
 		sample.Source,
 	)
 	if err != nil {
@@ -142,11 +142,18 @@ func (s *Store) Latest(limit int) ([]Sample, error) {
 		var sample Sample
 		var id int64
 		var rawTime string
-		err := rows.Scan(&id, &rawTime, &sample.PVWatts, &sample.LoadWatts, &sample.GridWatts, &sample.TodayKWh, &sample.Source)
+		var pv, load, grid, today float64
+		err := rows.Scan(&id, &rawTime, &pv, &load, &grid, &today, &sample.Source)
 		if err != nil {
 			return nil, err
 		}
 		sample.Time, err = time.Parse(time.RFC3339Nano, rawTime)
+		if sample.Source != "echonet" {
+			sample.PVWatts = floatPtr(pv)
+			sample.LoadWatts = floatPtr(load)
+			sample.GridWatts = floatPtr(grid)
+			sample.TodayKWh = floatPtr(today)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -166,6 +173,9 @@ func (s *Store) Latest(limit int) ([]Sample, error) {
 			return nil, err
 		}
 		out[i].Properties = props
+		if out[i].Source == "echonet" {
+			deriveECHONETSummary(&out[i])
+		}
 	}
 	return out, nil
 }
@@ -231,6 +241,13 @@ func nullInt64(v *int64) any {
 func nullFloat64(v *float64) any {
 	if v == nil {
 		return nil
+	}
+	return *v
+}
+
+func valueOrZero(v *float64) float64 {
+	if v == nil {
+		return 0
 	}
 	return *v
 }
