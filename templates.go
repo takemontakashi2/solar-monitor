@@ -172,18 +172,38 @@ function draw(samples) {
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, rect.width, rect.height);
-  const pad = 36;
+  const pad = {left: 44, right: 18, top: 24, bottom: 44};
   const values = samples.flatMap(s => [s.pv_watts, s.load_watts, has(s.grid_watts) ? Math.abs(s.grid_watts) : null]).filter(has);
   const max = Math.max(1000, ...values);
   ctx.strokeStyle = '#d8ddd0';
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
-    const y = pad + (rect.height - pad * 2) * i / 4;
-    ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(rect.width - pad, y); ctx.stroke();
+    const y = pad.top + (rect.height - pad.top - pad.bottom) * i / 4;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(rect.width - pad.right, y); ctx.stroke();
   }
+  drawTimeAxis(ctx, samples, rect, pad);
   line(samples, 'pv_watts', '#d19b1d', max, rect, pad);
   line(samples, 'load_watts', '#2f6f73', max, rect, pad);
   line(samples, 'grid_watts', '#8357a4', max, rect, pad, true);
+}
+function drawTimeAxis(ctx, samples, rect, pad) {
+  if (samples.length === 0) return;
+  const plotWidth = rect.width - pad.left - pad.right;
+  const y = rect.height - pad.bottom;
+  ctx.fillStyle = '#62675e';
+  ctx.strokeStyle = '#d8ddd0';
+  ctx.lineWidth = 1;
+  ctx.font = '12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  const ticks = Math.min(5, samples.length);
+  for (let i = 0; i < ticks; i++) {
+    const index = ticks === 1 ? 0 : Math.round((samples.length - 1) * i / (ticks - 1));
+    const x = pad.left + plotWidth * index / Math.max(1, samples.length - 1);
+    const label = new Date(samples[index].time).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 5); ctx.stroke();
+    ctx.fillText(label, x, y + 8);
+  }
 }
 function line(samples, key, color, max, rect, pad, abs) {
   if (samples.length < 2) return;
@@ -193,11 +213,11 @@ function line(samples, key, color, max, rect, pad, abs) {
   ctx.beginPath();
   let started = false;
   samples.forEach((s, i) => {
-    const x = pad + (rect.width - pad * 2) * i / (samples.length - 1);
+    const x = pad.left + (rect.width - pad.left - pad.right) * i / (samples.length - 1);
     const raw = s[key];
     if (!has(raw)) return;
     const val = abs ? Math.abs(raw) : raw;
-    const y = rect.height - pad - (rect.height - pad * 2) * val / max;
+    const y = rect.height - pad.bottom - (rect.height - pad.top - pad.bottom) * val / max;
     if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, y); }
   });
   ctx.stroke();
