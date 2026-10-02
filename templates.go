@@ -15,12 +15,22 @@ const indexHTML = `<!doctype html>
     .time { color: #62675e; font-size: 14px; }
     .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
     .card { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 16px; min-height: 100px; }
-    .label { color: #62675e; font-size: 13px; }
-    .value { font-size: clamp(26px, 4vw, 42px); font-weight: 750; margin-top: 8px; line-height: 1; }
+    .label { color: #62675e; font-size: 13px; overflow-wrap: anywhere; }
+    .value { font-size: clamp(26px, 4vw, 42px); font-weight: 750; margin-top: 8px; line-height: 1.05; overflow-wrap: anywhere; }
     .unit { font-size: 16px; color: #62675e; margin-left: 4px; }
-    .chart { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 12px; }
+    .chart { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 12px; margin-bottom: 18px; }
     canvas { width: 100%; height: 360px; display: block; }
-    @media (max-width: 760px) { main { padding: 14px; } header { align-items: start; flex-direction: column; } .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } canvas { height: 300px; } }
+    .panel { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 16px; margin-bottom: 18px; }
+    .panel h2 { font-size: 18px; margin: 0 0 12px; }
+    .prop-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .prop-value { font-size: 24px; font-weight: 720; margin-top: 8px; line-height: 1.15; overflow-wrap: anywhere; }
+    .prop-key { color: #62675e; font-size: 12px; margin-top: 8px; }
+    .chooser { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 14px; max-height: 280px; overflow: auto; padding-right: 4px; }
+    .choice { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; font-size: 13px; line-height: 1.35; }
+    .choice input { margin-top: 2px; }
+    .choice small { color: #62675e; display: block; overflow-wrap: anywhere; }
+    @media (max-width: 900px) { .grid, .prop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .chooser { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 760px) { main { padding: 14px; } header { align-items: start; flex-direction: column; } canvas { height: 300px; } .chooser { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -35,13 +45,32 @@ const indexHTML = `<!doctype html>
     <div class="card"><div class="label">買電 / 売電</div><div class="value"><span id="grid">--</span><span class="unit">kW</span></div></div>
     <div class="card"><div class="label">今日の発電</div><div class="value"><span id="today">--</span><span class="unit">kWh</span></div></div>
   </section>
+  <section class="prop-grid" id="selectedProps"></section>
   <section class="chart"><canvas id="chart"></canvas></section>
+  <section class="panel">
+    <h2>表示する値</h2>
+    <div class="chooser" id="propertyChooser"></div>
+  </section>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
+const storageKey = 'solar-monitor.selected-properties';
+const defaultSelected = ['027901:e0', '027901:e1', '027d01:e4', '027d01:cf', '027d01:da'];
+let selected = new Set(JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultSelected);
 const has = (v) => typeof v === 'number' && Number.isFinite(v);
 const fmtKW = (w) => has(w) ? (w / 1000).toFixed(2) : '--';
 const fmtKWh = (v) => has(v) ? v.toFixed(1) : '--';
+const keyOf = (p) => p.eoj + ':' + p.epc;
+const labelOf = (p) => p.name || keyOf(p);
+function saveSelected() {
+  localStorage.setItem(storageKey, JSON.stringify([...selected]));
+}
+function displayValue(p) {
+  if (p.description) return p.description;
+  if (has(p.float)) return String(p.float);
+  if (p.raw) return '0x' + p.raw;
+  return '--';
+}
 async function refresh() {
   const res = await fetch('/api/samples?limit=288', {cache: 'no-store'});
   const samples = await res.json();
@@ -49,10 +78,30 @@ async function refresh() {
   if (!latest) return;
   $('pv').textContent = fmtKW(latest.pv_watts);
   $('load').textContent = fmtKW(latest.load_watts);
-  $('grid').textContent = fmtKW(Math.abs(latest.grid_watts));
-  $('today').textContent = latest.today_kwh.toFixed(1);
+  $('grid').textContent = has(latest.grid_watts) ? fmtKW(Math.abs(latest.grid_watts)) : '--';
+  $('today').textContent = fmtKWh(latest.today_kwh);
   $('updated').textContent = new Date(latest.time).toLocaleString();
+  renderProperties(latest.properties || []);
   draw(samples);
+}
+function renderProperties(properties) {
+  const byKey = new Map(properties.map(p => [keyOf(p), p]));
+  const selectedProps = [...selected].map(k => byKey.get(k)).filter(Boolean);
+  $('selectedProps').innerHTML = selectedProps.map(p => '<div class="card"><div class="label">' + escapeHTML(labelOf(p)) + '</div><div class="prop-value">' + escapeHTML(displayValue(p)) + '</div><div class="prop-key">' + escapeHTML(keyOf(p)) + '</div></div>').join('');
+  $('propertyChooser').innerHTML = properties.map(p => {
+    const key = keyOf(p);
+    return '<label class="choice"><input type="checkbox" data-key="' + escapeHTML(key) + '" ' + (selected.has(key) ? 'checked' : '') + '><span>' + escapeHTML(labelOf(p)) + '<small>' + escapeHTML(key) + ' ' + escapeHTML(displayValue(p)) + '</small></span></label>';
+  }).join('');
+  $('propertyChooser').querySelectorAll('input').forEach(input => {
+    input.addEventListener('change', () => {
+      if (input.checked) selected.add(input.dataset.key); else selected.delete(input.dataset.key);
+      saveSelected();
+      renderProperties(properties);
+    });
+  });
+}
+function escapeHTML(value) {
+  return String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 }
 function draw(samples) {
   const canvas = $('chart');
@@ -82,13 +131,14 @@ function line(samples, key, color, max, rect, pad, abs) {
   ctx.strokeStyle = color;
   ctx.lineWidth = 3;
   ctx.beginPath();
+  let started = false;
   samples.forEach((s, i) => {
     const x = pad + (rect.width - pad * 2) * i / (samples.length - 1);
     const raw = s[key];
     if (!has(raw)) return;
     const val = abs ? Math.abs(raw) : raw;
     const y = rect.height - pad - (rect.height - pad * 2) * val / max;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, y); }
   });
   ctx.stroke();
 }
