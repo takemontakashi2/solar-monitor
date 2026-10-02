@@ -18,3 +18,7 @@ photos/
 *.db
 *.db-shm
 *.db-wal
+
+# Local ECHONET diagnostics
+echonet-scan
+echonet-scan.go

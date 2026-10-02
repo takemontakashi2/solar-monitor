@@ -34,7 +34,7 @@ func NewECHONETScanner(addr string) *ECHONETScanner {
 }
 
 func DiscoverECHONETNodes(ctx context.Context) ([]ECHONETNode, error) {
-	conn, err := net.ListenPacket("udp4", ":0")
+	conn, err := net.ListenPacket("udp4", ":3610")
 	if err != nil {
 		return nil, err
 	}
@@ -174,12 +174,15 @@ func (s *ECHONETScanner) readPropertyMap(ctx context.Context, eoj [3]byte) ([]by
 }
 
 func (s *ECHONETScanner) readRawProperty(ctx context.Context, eoj [3]byte, epc byte) ([]byte, error) {
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "udp4", s.addr)
+	conn, err := net.ListenPacket("udp4", ":3610")
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
+	udpAddr, err := net.ResolveUDPAddr("udp4", s.addr)
+	if err != nil {
+		return nil, err
+	}
 	deadline := time.Now().Add(s.readTimeout)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
@@ -195,11 +198,11 @@ func (s *ECHONETScanner) readRawProperty(ctx context.Context, eoj [3]byte, epc b
 		0x01,
 		epc, 0x00,
 	}
-	if _, err := conn.Write(req); err != nil {
+	if _, err := conn.WriteTo(req, udpAddr); err != nil {
 		return nil, err
 	}
 	buf := make([]byte, 1500)
-	n, err := conn.Read(buf)
+	n, _, err := conn.ReadFrom(buf)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +325,7 @@ func DumpRawECHONETTarget(ctx context.Context, w io.Writer, addr string) error {
 }
 
 func collectRawECHONET(ctx context.Context, addr string, eoj [3]byte, epc byte) ([]RawECHONETPacket, error) {
-	conn, err := net.ListenPacket("udp4", ":0")
+	conn, err := net.ListenPacket("udp4", ":3610")
 	if err != nil {
 		return nil, err
 	}

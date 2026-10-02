@@ -120,7 +120,7 @@ today=027901:e1:0.001
 ./solar-monitor \
   -source echonet \
   -echonet-addr 192.168.100.202 \
-  -echonet-fields "pv=027901:e0,load=028701:e7,grid=028801:e7,today=027901:e1:0.001"
+  -echonet-fields "pv=027901:e0,today=027901:e1:0.001"
 ```
 
 写真から読めた情報:

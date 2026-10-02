@@ -48,12 +48,15 @@ func (s *ECHONETSource) Read(ctx context.Context) (Sample, error) {
 }
 
 func (s *ECHONETSource) readProperty(ctx context.Context, prop ECHONETProperty, signed bool) (float64, error) {
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "udp4", s.addr)
+	conn, err := net.ListenPacket("udp4", ":3610")
 	if err != nil {
 		return 0, err
 	}
 	defer conn.Close()
+	udpAddr, err := net.ResolveUDPAddr("udp4", s.addr)
+	if err != nil {
+		return 0, err
+	}
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	} else {
@@ -69,11 +72,11 @@ func (s *ECHONETSource) readProperty(ctx context.Context, prop ECHONETProperty, 
 		0x01,
 		prop.EPC, 0x00,
 	}
-	if _, err := conn.Write(req); err != nil {
+	if _, err := conn.WriteTo(req, udpAddr); err != nil {
 		return 0, err
 	}
 	buf := make([]byte, 1500)
-	n, err := conn.Read(buf)
+	n, _, err := conn.ReadFrom(buf)
 	if err != nil {
 		return 0, err
 	}

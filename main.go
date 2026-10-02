@@ -27,7 +27,7 @@ func runServer(args []string) {
 	sourceKind := fs.String("source", "mock", "source type: mock, http-json, or echonet")
 	sourceURL := fs.String("source-url", "", "HTTP JSON source URL")
 	echonetAddr := fs.String("echonet-addr", "", "ECHONET Lite target IPv4 address")
-	echonetFields := fs.String("echonet-fields", "pv=027901:e0,load=028701:e7,grid=028801:e7,today=027901:e1:0.001", "ECHONET fields: name=EOJ:EPC[:scale], comma-separated")
+	echonetFields := fs.String("echonet-fields", "pv=027901:e0,today=027901:e1:0.001", "ECHONET fields: name=EOJ:EPC[:scale], comma-separated")
 	_ = fs.Parse(args)
 
 	store, err := NewStore(*data)
