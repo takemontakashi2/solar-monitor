@@ -25,6 +25,41 @@
 - サーバ実行環境: 家庭内LAN上のPC、Raspberry Pi等
 - 閲覧端末: タブレット、PCブラウザ等
 
+## 開発・調査に使うパッケージ
+
+ビルドに最低限必要なもの:
+
+- Go
+- Git
+
+調査や運用確認にあると便利なもの:
+
+- `jq`: JSONの確認、ECHONET Device Descriptionの抽出、APIレスポンス確認
+- `sqlite3`: 保存済みSQLite DBの直接確認
+- `curl`: HTTP APIの動作確認
+- `unzip`: 添付ファイルやECHONET公式配布zipの展開
+
+ネットワーク調査にあると便利なもの:
+
+- `tcpdump`: UDP 3610 の送受信確認
+- `netcat` または `nc`: 簡易的な通信確認
+
+コード検索にあると便利なもの:
+
+- `ripgrep` (`rg`): 高速検索用。環境によってはパッケージが提供されていないため必須ではない。
+
+Debian/Ubuntu系での例:
+
+```sh
+sudo apt install git jq sqlite3 curl unzip
+```
+
+ネットワーク調査も行う場合:
+
+```sh
+sudo apt install tcpdump netcat-openbsd
+```
+
 ## 実機で確認済みのECHONET Lite情報
 
 検出済みEOJ:
