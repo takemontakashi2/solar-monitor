@@ -33,6 +33,22 @@
 - `027901`: 太陽光発電
 - `027d01`: 蓄電池
 
+EPC名の参照元:
+
+- ECHONET Lite Web API Device Description v1.7.0
+- `pvPowerGeneration.json`
+- `storageBattery.json`
+- `lvSmartElectricEnergyMeter.json`
+- `controller.json`
+
+候補特定で特に見る標準EPC:
+
+- `027901:e0`: 瞬時発電電力計測値
+- `027901:e1`: 積算発電電力量計測値
+- `027901:e3`: 積算売電電力量計測値
+- `027d01:d3`: 瞬時充放電電力計測値
+- `028801:e7`: 瞬時電力計測値
+
 通信上の注意:
 
 - 実機との通信では、ローカル側もUDP `:3610` にbindする必要がある。
