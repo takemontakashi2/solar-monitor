@@ -82,12 +82,7 @@ func (a *App) handleLatest(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) handleSamples(w http.ResponseWriter, r *http.Request) {
-	limit := 288
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 5000 {
-			limit = n
-		}
-	}
+	limit := parseBoundedInt(r.URL.Query().Get("limit"), 288, 1, 5000)
 	samples, err := a.store.LatestSummaries(limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -97,28 +92,12 @@ func (a *App) handleSamples(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleProperties(w http.ResponseWriter, r *http.Request) {
-	limit := 1
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 100 {
-			limit = n
-		}
-	}
-	samples, err := a.store.Latest(limit)
+	limit := parseBoundedInt(r.URL.Query().Get("limit"), 1, 1, 100)
+	keys := parsePropertyKeys(r.URL.Query().Get("keys"))
+	props, err := a.store.LatestProperties(limit, keys)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-	props := []SampleProperty{}
-	keys := parsePropertyKeys(r.URL.Query().Get("keys"))
-	for _, sample := range samples {
-		for _, prop := range sample.Properties {
-			if len(keys) > 0 {
-				if _, ok := keys[prop.EOJ+":"+prop.EPC]; !ok {
-					continue
-				}
-			}
-			props = append(props, prop)
-		}
 	}
 	writeJSON(w, props)
 }
@@ -136,18 +115,21 @@ func parsePropertyKeys(raw string) map[string]struct{} {
 }
 
 func (a *App) handlePropertyStats(w http.ResponseWriter, r *http.Request) {
-	limit := 1440
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 10000 {
-			limit = n
-		}
-	}
+	limit := parseBoundedInt(r.URL.Query().Get("limit"), 1440, 1, 10000)
 	stats, err := a.store.PropertyStats(limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, stats)
+}
+
+func parseBoundedInt(raw string, fallback, min, max int) int {
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < min || n > max {
+		return fallback
+	}
+	return n
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

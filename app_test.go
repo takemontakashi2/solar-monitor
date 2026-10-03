@@ -98,3 +98,24 @@ func TestAppPropertiesAPIFiltersKeys(t *testing.T) {
 		t.Fatalf("unexpected properties: %#v", props)
 	}
 }
+
+func TestParseBoundedInt(t *testing.T) {
+	tests := []struct {
+		raw      string
+		fallback int
+		min      int
+		max      int
+		want     int
+	}{
+		{raw: "720", fallback: 288, min: 1, max: 5000, want: 720},
+		{raw: "", fallback: 288, min: 1, max: 5000, want: 288},
+		{raw: "0", fallback: 288, min: 1, max: 5000, want: 288},
+		{raw: "5001", fallback: 288, min: 1, max: 5000, want: 288},
+		{raw: "bad", fallback: 288, min: 1, max: 5000, want: 288},
+	}
+	for _, tt := range tests {
+		if got := parseBoundedInt(tt.raw, tt.fallback, tt.min, tt.max); got != tt.want {
+			t.Fatalf("parseBoundedInt(%q) = %d, want %d", tt.raw, got, tt.want)
+		}
+	}
+}

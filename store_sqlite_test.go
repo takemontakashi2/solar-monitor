@@ -40,6 +40,38 @@ func TestStoreAppendAndLatest(t *testing.T) {
 	}
 }
 
+func TestStoreLatestSummariesKeepsECHONETZeroPV(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "solar.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	err = store.Append(Sample{
+		Time:     time.Date(2026, 10, 3, 20, 11, 0, 0, time.UTC),
+		PVWatts:  floatPtr(0),
+		TodayKWh: floatPtr(22.1),
+		Source:   "echonet",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	samples, err := store.LatestSummaries(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) != 1 {
+		t.Fatalf("got %d samples, want 1", len(samples))
+	}
+	if samples[0].PVWatts == nil || *samples[0].PVWatts != 0 {
+		t.Fatalf("PVWatts = %v, want 0", samples[0].PVWatts)
+	}
+	if samples[0].LoadWatts != nil {
+		t.Fatalf("LoadWatts = %v, want nil", samples[0].LoadWatts)
+	}
+}
+
 func TestStorePropertyStats(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "solar.db"))
 	if err != nil {
@@ -94,5 +126,40 @@ func TestStorePropertyStats(t *testing.T) {
 	}
 	if stat.Range == nil || *stat.Range != 150 {
 		t.Fatalf("got range %v, want 150", stat.Range)
+	}
+}
+
+func TestStoreLatestPropertiesFiltersKeys(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "solar.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	err = store.Append(Sample{
+		Time:   time.Date(2026, 10, 3, 20, 11, 0, 0, time.UTC),
+		Source: "echonet",
+		Properties: []SampleProperty{
+			{EOJ: "027901", EPC: "e0", Name: "発電", Raw: "0000", Float: floatPtr(0)},
+			{EOJ: "027d01", EPC: "80", Name: "動作状態", Raw: "30", Float: floatPtr(48), Description: "ON"},
+			{EOJ: "05ff01", EPC: "88", Name: "異常発生状態", Raw: "42", Float: floatPtr(66), Description: "異常なし"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	props, err := store.LatestProperties(1, map[string]struct{}{
+		"027d01:80": {},
+		"05ff01:88": {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(props) != 2 {
+		t.Fatalf("got %d properties, want 2: %#v", len(props), props)
+	}
+	if props[0].EOJ != "027d01" || props[0].EPC != "80" || props[1].EOJ != "05ff01" || props[1].EPC != "88" {
+		t.Fatalf("unexpected properties: %#v", props)
 	}
 }

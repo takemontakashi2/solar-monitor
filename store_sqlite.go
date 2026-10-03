@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -163,17 +164,13 @@ func (s *Store) latest(limit int, includeProperties bool) ([]Sample, error) {
 			sample.GridWatts = floatPtr(grid)
 			sample.TodayKWh = floatPtr(today)
 		} else if !includeProperties {
-			if pv != 0 {
-				sample.PVWatts = floatPtr(pv)
-			}
+			sample.PVWatts = floatPtr(pv)
+			sample.TodayKWh = floatPtr(today)
 			if load != 0 {
 				sample.LoadWatts = floatPtr(load)
 			}
 			if grid != 0 {
 				sample.GridWatts = floatPtr(grid)
-			}
-			if today != 0 {
-				sample.TodayKWh = floatPtr(today)
 			}
 		}
 		if err != nil {
@@ -217,6 +214,47 @@ func (s *Store) propertiesForSample(sampleID int64) ([]SampleProperty, error) {
 	}
 	defer rows.Close()
 
+	return scanProperties(rows)
+}
+
+func (s *Store) LatestProperties(limit int, keys map[string]struct{}) ([]SampleProperty, error) {
+	args := []any{limit}
+	filter := ""
+	if len(keys) > 0 {
+		clauses := make([]string, 0, len(keys))
+		for key := range keys {
+			eoj, epc, ok := strings.Cut(key, ":")
+			if !ok || eoj == "" || epc == "" {
+				continue
+			}
+			clauses = append(clauses, "(eoj = ? AND epc = ?)")
+			args = append(args, eoj, epc)
+		}
+		if len(clauses) > 0 {
+			filter = " AND (" + strings.Join(clauses, " OR ") + ")"
+		}
+	}
+	rows, err := s.db.Query(`
+		WITH latest_samples AS (
+			SELECT id
+			FROM samples
+			ORDER BY time DESC, id DESC
+			LIMIT ?
+		)
+		SELECT time, eoj, epc, name, raw, unsigned_value, signed_value, float_value, description
+		FROM properties
+		WHERE sample_id IN (SELECT id FROM latest_samples)`+filter+`
+		ORDER BY time, eoj, epc
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanProperties(rows)
+}
+
+func scanProperties(rows *sql.Rows) ([]SampleProperty, error) {
 	props := []SampleProperty{}
 	for rows.Next() {
 		var prop SampleProperty
