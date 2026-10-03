@@ -118,19 +118,39 @@ async function refresh() {
   $('grid').textContent = has(latest.grid_watts) ? fmtKW(Math.abs(latest.grid_watts)) : '--';
   $('today').textContent = fmtKWh(latest.today_kwh);
   $('updated').textContent = new Date(latest.time).toLocaleString();
-  renderProperties(latest.properties || []);
-  if (settingsOpen) refreshStats();
+  refreshSelectedProperties();
+  if (settingsOpen) {
+    refreshAllProperties();
+    refreshStats();
+  }
   draw(samples);
+}
+async function refreshSelectedProperties() {
+  if (selected.size === 0) {
+    renderSelectedProperties([]);
+    return;
+  }
+  const keys = encodeURIComponent([...selected].join(','));
+  const res = await fetch('/api/properties?limit=1&keys=' + keys, {cache: 'no-store'});
+  const properties = await res.json();
+  renderSelectedProperties(properties || []);
+}
+async function refreshAllProperties() {
+  const res = await fetch('/api/properties?limit=1', {cache: 'no-store'});
+  const properties = await res.json();
+  renderProperties(properties || []);
 }
 async function refreshStats() {
   const res = await fetch('/api/property-stats?limit=1440', {cache: 'no-store'});
   const stats = await res.json();
   renderStats(stats || []);
 }
-function renderProperties(properties) {
-  const byKey = new Map(properties.map(p => [keyOf(p), p]));
+function renderSelectedProperties(properties) {
   const selectedProps = properties.filter(p => selected.has(keyOf(p)));
   $('selectedProps').innerHTML = selectedProps.map(p => '<div class="card"><div class="label">' + escapeHTML(labelOf(p)) + '</div><div class="prop-value">' + escapeHTML(displayValue(p)) + '</div><div class="prop-key">' + escapeHTML(keyOf(p)) + '</div></div>').join('');
+}
+function renderProperties(properties) {
+  renderSelectedProperties(properties);
   const groups = groupByDevice(properties);
   $('propertyChooser').innerHTML = groups.map(group => '<div class="device-group"><div class="device-title">' + escapeHTML(deviceName(group.eoj)) + ' <small>' + escapeHTML(group.eoj) + '</small></div><div class="choice-grid">' + group.items.map(p => {
     const key = keyOf(p);
@@ -141,6 +161,7 @@ function renderProperties(properties) {
       if (input.checked) selected.add(input.dataset.key); else selected.delete(input.dataset.key);
       saveSelected();
       renderProperties(properties);
+      refreshSelectedProperties();
     });
   });
 }
@@ -226,7 +247,10 @@ $('settingsButton').addEventListener('click', () => {
   settingsOpen = !settingsOpen;
   localStorage.setItem(settingsOpenKey, String(settingsOpen));
   applySettingsVisibility();
-  if (settingsOpen) refreshStats();
+  if (settingsOpen) {
+    refreshAllProperties();
+    refreshStats();
+  }
 });
 applySettingsVisibility();
 refresh();

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -87,7 +88,7 @@ func (a *App) handleSamples(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	samples, err := a.store.Latest(limit)
+	samples, err := a.store.LatestSummaries(limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -108,10 +109,30 @@ func (a *App) handleProperties(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	props := []SampleProperty{}
+	keys := parsePropertyKeys(r.URL.Query().Get("keys"))
 	for _, sample := range samples {
-		props = append(props, sample.Properties...)
+		for _, prop := range sample.Properties {
+			if len(keys) > 0 {
+				if _, ok := keys[prop.EOJ+":"+prop.EPC]; !ok {
+					continue
+				}
+			}
+			props = append(props, prop)
+		}
 	}
 	writeJSON(w, props)
+}
+
+func parsePropertyKeys(raw string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, item := range strings.Split(raw, ",") {
+		key := strings.ToLower(strings.TrimSpace(item))
+		if key == "" {
+			continue
+		}
+		out[key] = struct{}{}
+	}
+	return out
 }
 
 func (a *App) handlePropertyStats(w http.ResponseWriter, r *http.Request) {

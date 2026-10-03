@@ -126,6 +126,14 @@ func (s *Store) Append(sample Sample) error {
 }
 
 func (s *Store) Latest(limit int) ([]Sample, error) {
+	return s.latest(limit, true)
+}
+
+func (s *Store) LatestSummaries(limit int) ([]Sample, error) {
+	return s.latest(limit, false)
+}
+
+func (s *Store) latest(limit int, includeProperties bool) ([]Sample, error) {
 	rows, err := s.db.Query(`
 		SELECT id, time, pv_watts, load_watts, grid_watts, today_kwh, source
 		FROM samples
@@ -154,6 +162,19 @@ func (s *Store) Latest(limit int) ([]Sample, error) {
 			sample.LoadWatts = floatPtr(load)
 			sample.GridWatts = floatPtr(grid)
 			sample.TodayKWh = floatPtr(today)
+		} else if !includeProperties {
+			if pv != 0 {
+				sample.PVWatts = floatPtr(pv)
+			}
+			if load != 0 {
+				sample.LoadWatts = floatPtr(load)
+			}
+			if grid != 0 {
+				sample.GridWatts = floatPtr(grid)
+			}
+			if today != 0 {
+				sample.TodayKWh = floatPtr(today)
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -167,6 +188,9 @@ func (s *Store) Latest(limit int) ([]Sample, error) {
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 		ids[i], ids[j] = ids[j], ids[i]
+	}
+	if !includeProperties {
+		return out, nil
 	}
 	for i, id := range ids {
 		props, err := s.propertiesForSample(id)
