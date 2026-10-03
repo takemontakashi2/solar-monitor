@@ -74,9 +74,9 @@ const indexHTML = `<!doctype html>
     <div class="card"><div class="label">買電 / 売電</div><div class="value"><span id="grid">--</span><span class="unit">kW</span></div></div>
     <div class="card"><div class="label">今日の発電</div><div class="value"><span id="today">--</span><span class="unit">kWh</span></div></div>
   </section>
-  <section class="health-grid" id="healthGrid"></section>
   <section class="prop-grid" id="selectedProps"></section>
   <section class="chart"><canvas id="chart"></canvas></section>
+  <section class="health-grid" id="healthGrid"></section>
   <section class="panel" id="settingsPanel" hidden>
     <h2>表示する値</h2>
     <div class="chooser" id="propertyChooser"></div>
