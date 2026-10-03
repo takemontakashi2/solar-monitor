@@ -106,6 +106,7 @@ const healthDevices = [
 ];
 const healthEpcs = ['80', '88', '86'];
 const healthKeys = healthDevices.flatMap(device => healthEpcs.map(epc => device.eoj + ':' + epc));
+const chartSampleLimit = 720;
 let selected = new Set(JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultSelected);
 let settingsOpen = localStorage.getItem(settingsOpenKey) === 'true';
 const has = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -129,7 +130,7 @@ function displayValue(p) {
   return '--';
 }
 async function refresh() {
-  const res = await fetch('/api/samples?limit=288', {cache: 'no-store'});
+  const res = await fetch('/api/samples?limit=' + chartSampleLimit, {cache: 'no-store'});
   const samples = await res.json();
   const latest = samples[samples.length - 1];
   if (!latest) return;
