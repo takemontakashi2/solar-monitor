@@ -156,6 +156,14 @@ func describeECHONETValue(eoj [3]byte, epc byte, data []byte) string {
 			return "OFF"
 		}
 	}
+	if epc == 0x88 {
+		switch data[0] {
+		case 0x41:
+			return "異常あり"
+		case 0x42:
+			return "異常なし"
+		}
+	}
 	if class == 0x027d {
 		switch epc {
 		case 0xd3:

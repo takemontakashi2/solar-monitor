@@ -21,6 +21,18 @@ const indexHTML = `<!doctype html>
     .label { color: #62675e; font-size: 13px; overflow-wrap: anywhere; }
     .value { font-size: clamp(26px, 4vw, 42px); font-weight: 750; margin-top: 8px; line-height: 1.05; overflow-wrap: anywhere; }
     .unit { font-size: 16px; color: #62675e; margin-left: 4px; }
+    .health-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .health-card { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 14px; }
+    .health-title { font-weight: 700; margin-bottom: 10px; }
+    .health-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-top: 1px solid #edf0e8; padding: 8px 0; font-size: 14px; }
+    .health-row:first-of-type { border-top: 0; }
+    .health-value { font-weight: 720; overflow-wrap: anywhere; text-align: right; }
+    .state-icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 999px; font-size: 18px; font-weight: 800; line-height: 1; }
+    .state-on { color: #ffffff; background: #168a45; }
+    .state-off { color: #ffffff; background: #bd2d2d; }
+    .state-unknown { color: #62675e; background: #edf0e8; }
+    .error-ok { color: #62675e; }
+    .error-bad { color: #bd2d2d; }
     .chart { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 12px; margin-bottom: 18px; }
     canvas { width: 100%; height: 360px; display: block; }
     .panel { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 16px; margin-bottom: 18px; }
@@ -46,8 +58,8 @@ const indexHTML = `<!doctype html>
     .stats-table th, .stats-table td { border-bottom: 1px solid #e4e8dd; padding: 8px 6px; text-align: right; white-space: nowrap; }
     .stats-table th:first-child, .stats-table td:first-child, .stats-table th:nth-child(2), .stats-table td:nth-child(2) { text-align: left; }
     .stats-table tbody tr:hover { background: #f7f9f4; }
-    @media (max-width: 900px) { .grid, .prop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-    @media (max-width: 760px) { main { padding: 14px; } header { align-items: start; flex-direction: column; } canvas { height: 300px; } .choice-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 900px) { .grid, .prop-grid, .health-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 760px) { main { padding: 14px; } header { align-items: start; flex-direction: column; } canvas { height: 300px; } .choice-grid, .health-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -62,6 +74,7 @@ const indexHTML = `<!doctype html>
     <div class="card"><div class="label">買電 / 売電</div><div class="value"><span id="grid">--</span><span class="unit">kW</span></div></div>
     <div class="card"><div class="label">今日の発電</div><div class="value"><span id="today">--</span><span class="unit">kWh</span></div></div>
   </section>
+  <section class="health-grid" id="healthGrid"></section>
   <section class="prop-grid" id="selectedProps"></section>
   <section class="chart"><canvas id="chart"></canvas></section>
   <section class="panel" id="settingsPanel" hidden>
@@ -86,6 +99,13 @@ const $ = (id) => document.getElementById(id);
 const storageKey = 'solar-monitor.selected-properties';
 const settingsOpenKey = 'solar-monitor.settings-open';
 const defaultSelected = ['027901:e0', '027901:e1', '027d01:e4', '027d01:cf', '027d01:da'];
+const healthDevices = [
+  {eoj: '027901', name: 'パネル'},
+  {eoj: '027d01', name: '電池'},
+  {eoj: '05ff01', name: 'コントローラー'}
+];
+const healthEpcs = ['80', '88', '86'];
+const healthKeys = healthDevices.flatMap(device => healthEpcs.map(epc => device.eoj + ':' + epc));
 let selected = new Set(JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultSelected);
 let settingsOpen = localStorage.getItem(settingsOpenKey) === 'true';
 const has = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -126,14 +146,17 @@ async function refresh() {
   draw(samples);
 }
 async function refreshSelectedProperties() {
-  if (selected.size === 0) {
+  const keysToFetch = [...new Set([...selected, ...healthKeys])];
+  if (keysToFetch.length === 0) {
     renderSelectedProperties([]);
+    renderHealth([]);
     return;
   }
-  const keys = encodeURIComponent([...selected].join(','));
+  const keys = encodeURIComponent(keysToFetch.join(','));
   const res = await fetch('/api/properties?limit=1&keys=' + keys, {cache: 'no-store'});
   const properties = await res.json();
   renderSelectedProperties(properties || []);
+  renderHealth(properties || []);
 }
 async function refreshAllProperties() {
   const res = await fetch('/api/properties?limit=1', {cache: 'no-store'});
@@ -148,6 +171,42 @@ async function refreshStats() {
 function renderSelectedProperties(properties) {
   const selectedProps = properties.filter(p => selected.has(keyOf(p)));
   $('selectedProps').innerHTML = selectedProps.map(p => '<div class="card"><div class="label">' + escapeHTML(labelOf(p)) + '</div><div class="prop-value">' + escapeHTML(displayValue(p)) + '</div><div class="prop-key">' + escapeHTML(keyOf(p)) + '</div></div>').join('');
+}
+function renderHealth(properties) {
+  const byKey = new Map(properties.map(p => [keyOf(p), p]));
+  $('healthGrid').innerHTML = healthDevices.map(device => {
+    const status = byKey.get(device.eoj + ':80');
+    const errorState = byKey.get(device.eoj + ':88');
+    const errorCode = byKey.get(device.eoj + ':86');
+    return '<div class="health-card"><div class="health-title">' + escapeHTML(device.name) + '</div>' +
+      '<div class="health-row"><span>動作状態</span><span class="health-value">' + statusHTML(status) + '</span></div>' +
+      '<div class="health-row"><span>エラー</span><span class="health-value ' + escapeHTML(errorClass(errorState)) + '">' + escapeHTML(errorDisplay(errorState, errorCode)) + '</span></div>' +
+      '<div class="health-row"><span>異常コード</span><span class="health-value">' + escapeHTML(errorCodeDisplay(errorState, errorCode)) + '</span></div></div>';
+  }).join('');
+}
+function statusHTML(prop) {
+  const value = (prop && (prop.description || '')).toUpperCase();
+  if (value === 'ON') return '<span class="state-icon state-on">○</span>';
+  if (value === 'OFF') return '<span class="state-icon state-off">×</span>';
+  return '<span class="state-icon state-unknown">--</span>';
+}
+function hasError(prop) {
+  if (!prop) return false;
+  if (prop.raw === '41') return true;
+  if (prop.raw === '42') return false;
+  return prop.description && prop.description !== '異常なし';
+}
+function errorDisplay(errorState, errorCode) {
+  if (!hasError(errorState)) return '--';
+  return errorCodeDisplay(errorState, errorCode);
+}
+function errorCodeDisplay(errorState, errorCode) {
+  if (!hasError(errorState)) return '--';
+  if (!errorCode) return '異常あり';
+  return errorCode.description || (errorCode.raw ? '0x' + errorCode.raw : '異常あり');
+}
+function errorClass(errorState) {
+  return hasError(errorState) ? 'error-bad' : 'error-ok';
 }
 function renderProperties(properties) {
   renderSelectedProperties(properties);

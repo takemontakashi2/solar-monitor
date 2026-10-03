@@ -62,6 +62,15 @@ func TestECHONETPowerDescriptions(t *testing.T) {
 	}
 }
 
+func TestECHONETErrorStatusDescriptions(t *testing.T) {
+	if got := describeECHONETValue([3]byte{0x02, 0x79, 0x01}, 0x88, []byte{0x41}); got != "異常あり" {
+		t.Fatalf("got %q", got)
+	}
+	if got := describeECHONETValue([3]byte{0x02, 0x79, 0x01}, 0x88, []byte{0x42}); got != "異常なし" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func sameBytes(a, b []byte) bool {
 	if len(a) != len(b) {
 		return false
