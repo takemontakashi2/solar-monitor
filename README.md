@@ -8,9 +8,16 @@ Pure Go SQLiteで記録する、家庭用太陽光発電の記録・表示サー
 
 ## 起動
 
+実機から取得して運用する場合:
+
 ```sh
 go build -o solar-monitor .
-./solar-monitor -addr :8080 -data data/solar.db -interval 60s
+./solar-monitor \
+  -addr :8080 \
+  -data data/solar.db \
+  -interval 60s \
+  -source echonet \
+  -echonet-addr 192.168.100.202
 ```
 
 タブレットからは同じLAN内で以下を開きます。
@@ -47,7 +54,7 @@ git push -u origin main
 
 ## データ取得方式
 
-初期状態はデモ用の疑似データです。
+`-source` を指定しない場合はデモ用の疑似データです。
 
 ```sh
 ./solar-monitor -source mock
@@ -100,7 +107,7 @@ git push -u origin main
 ## SHARP SUNVISTA JH-RWL8で試す
 
 添付写真の機器は SHARP SUNVISTA のモニター `JH-RWL8` で、IPアドレスは `192.168.100.202` と読めます。
-同じLANにいる端末から、まず自動探索を試します。
+同じLANにいる端末から、自動探索を試す場合は以下です。
 
 ```sh
 ./solar-monitor -source echonet
@@ -118,8 +125,6 @@ ECHONET Lite はUDP `3610` を使います。端末側のファイアウォー�
 
 ```text
 pv=027901:e0
-load=028701:e7
-grid=028801:e7
 today=027901:e1:0.001
 ```
 
