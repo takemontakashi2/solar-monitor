@@ -14,6 +14,10 @@ func deriveECHONETSummary(sample *Sample) {
 			sample.PVWatts = floatPtr(*prop.Float)
 		case "027901:e1":
 			sample.TodayKWh = floatPtr(*prop.Float * 0.001)
+		case "05ff01:f2":
+			if *prop.Float > 0 {
+				sample.GridWatts = floatPtr(-*prop.Float)
+			}
 		}
 	}
 }

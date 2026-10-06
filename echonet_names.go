@@ -181,6 +181,10 @@ func describeECHONETValue(eoj [3]byte, epc byte, data []byte) string {
 			}
 		case 0xe4:
 			return fmt.Sprintf("%d%%", value)
+		case 0xd6, 0xd8:
+			return fmt.Sprintf("%.3f kWh", float64(value)*0.001)
+		case 0xe3:
+			return fmt.Sprintf("%.2f kWh", float64(value)*0.01)
 		case 0xeb, 0xec:
 			return fmt.Sprintf("%d W", value)
 		}

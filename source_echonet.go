@@ -58,15 +58,15 @@ func (s *ECHONETSource) readAllProperties(ctx context.Context, t time.Time, full
 	}
 	props := []SampleProperty{}
 	for _, object := range objects {
-		propertyMap, err := s.readPropertyMap(ctx, conn, udpAddr, object)
-		if err != nil {
-			continue
+		candidates := echonetReadCandidates(object, fullScan)
+		if len(candidates) == 0 {
+			propertyMap, err := s.readPropertyMap(ctx, conn, udpAddr, object)
+			if err != nil {
+				continue
+			}
+			candidates = propertyMap
 		}
-		batchSize := 10
-		if fullScan {
-			batchSize = 1
-		}
-		for _, batch := range propertyBatches(propertyMap, batchSize) {
+		for _, batch := range propertyBatches(candidates, 1) {
 			values, err := s.readRawProperties(ctx, conn, udpAddr, object, batch)
 			if err != nil {
 				continue
@@ -81,6 +81,48 @@ func (s *ECHONETSource) readAllProperties(ctx context.Context, t time.Time, full
 		}
 	}
 	return props, nil
+}
+
+func echonetReadCandidates(eoj [3]byte, fullScan bool) []byte {
+	class := uint16(eoj[0])<<8 | uint16(eoj[1])
+	common := []byte{0x80, 0x81, 0x82, 0x83, 0x86, 0x88, 0x89, 0x8a, 0x8b, 0x8d, 0x97, 0x98}
+	switch class {
+	case 0x0279:
+		normal := append([]byte{}, common...)
+		normal = append(normal, 0xe0, 0xe1, 0xe8)
+		if !fullScan {
+			return uniqueBytes(normal)
+		}
+		full := append(normal, 0x93, 0xa0, 0xa2, 0xb0, 0xb1, 0xb2, 0xb4, 0xc1, 0xc2, 0xc3, 0xc4, 0xd0, 0xd1, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8)
+		return uniqueBytes(full)
+	case 0x027d:
+		normal := append([]byte{}, common...)
+		normal = append(normal, 0xd3, 0xd6, 0xd8, 0xe3, 0xe4, 0xcf, 0xda, 0xdb, 0xeb, 0xec)
+		if !fullScan {
+			return uniqueBytes(normal)
+		}
+		full := append(normal, 0x93, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xc1, 0xc2, 0xc7, 0xd0, 0xd1, 0xd2, 0xe5, 0xe6, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5, 0xf6)
+		return uniqueBytes(full)
+	case 0x05ff:
+		normal := append([]byte{}, common...)
+		normal = append(normal, 0x8c, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5)
+		return uniqueBytes(normal)
+	default:
+		return nil
+	}
+}
+
+func uniqueBytes(values []byte) []byte {
+	seen := map[byte]struct{}{}
+	out := make([]byte, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func (s *ECHONETSource) openConn() (net.PacketConn, *net.UDPAddr, error) {
@@ -195,7 +237,7 @@ func (s *ECHONETSource) applyKnownProperty(sample *Sample, prop SampleProperty) 
 func makeSampleProperty(t time.Time, eoj [3]byte, epc byte, data []byte) SampleProperty {
 	unsigned := unsignedBE(data)
 	signed := signedBE(data)
-	float := float64(unsigned)
+	float := echonetNumericValue(eoj, epc, data)
 	return SampleProperty{
 		Time:        t,
 		EOJ:         formatEOJ(eoj),
@@ -207,6 +249,21 @@ func makeSampleProperty(t time.Time, eoj [3]byte, epc byte, data []byte) SampleP
 		Float:       &float,
 		Description: describeECHONETValue(eoj, epc, data),
 	}
+}
+
+func echonetNumericValue(eoj [3]byte, epc byte, data []byte) float64 {
+	class := uint16(eoj[0])<<8 | uint16(eoj[1])
+	switch class {
+	case 0x027d:
+		if epc == 0xd3 {
+			return float64(signedBE(data))
+		}
+	case 0x0288:
+		if epc == 0xe7 {
+			return float64(signedBE(data))
+		}
+	}
+	return float64(unsignedBE(data))
 }
 
 func echonetPropertyData(packet []byte, epc byte) ([]byte, error) {
