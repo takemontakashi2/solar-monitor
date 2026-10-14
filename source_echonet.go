@@ -39,6 +39,7 @@ func (s *ECHONETSource) Read(ctx context.Context) (Sample, error) {
 	}
 	result.Properties = properties
 	s.initialScanDone = true
+	deriveECHONETSummary(&result)
 	for _, prop := range properties {
 		s.applyKnownProperty(&result, prop)
 	}
@@ -261,6 +262,13 @@ func echonetNumericValue(eoj [3]byte, epc byte, data []byte) float64 {
 	case 0x0288:
 		if epc == 0xe7 {
 			return float64(signedBE(data))
+		}
+	case 0x05ff:
+		switch epc {
+		case 0xf2, 0xf3:
+			return float64(unsignedBE(data)) * 0.1
+		case 0xf4, 0xf5:
+			return float64(unsignedBE(data)) * 0.001
 		}
 	}
 	return float64(unsignedBE(data))

@@ -134,6 +134,10 @@ func echonetPropertyName(eoj [3]byte, epc byte) string {
 			0xc0: "コントローラID",
 			0xc1: "管理台数",
 			0xc2: "機器情報リスト",
+			0xf2: "瞬時売電電力",
+			0xf3: "瞬時買電電力",
+			0xf4: "積算売電電力量",
+			0xf5: "積算買電電力量",
 		}
 		if name, ok := names[epc]; ok {
 			return name
@@ -200,6 +204,14 @@ func describeECHONETValue(eoj [3]byte, epc byte, data []byte) string {
 		case 0xe0:
 			return fmt.Sprintf("%d W", value)
 		case 0xe1:
+			return fmt.Sprintf("%.3f kWh", float64(value)*0.001)
+		}
+	}
+	if class == 0x05ff {
+		switch epc {
+		case 0xf2, 0xf3:
+			return fmt.Sprintf("%.1f W", float64(value)*0.1)
+		case 0xf4, 0xf5:
 			return fmt.Sprintf("%.3f kWh", float64(value)*0.001)
 		}
 	}

@@ -48,17 +48,39 @@ func TestMakeSamplePropertyUsesSignedBatteryPower(t *testing.T) {
 	}
 }
 
-func TestDeriveECHONETSummaryUsesControllerExportCandidate(t *testing.T) {
+func TestMakeSamplePropertyScalesSharpControllerValues(t *testing.T) {
+	sell := makeSampleProperty(time.Time{}, [3]byte{0x05, 0xff, 0x01}, 0xf2, []byte{0x00, 0x00, 0x04, 0xb0})
+	if sell.Float == nil || *sell.Float != 120 {
+		t.Fatalf("sell Float = %v, want 120", sell.Float)
+	}
+	if sell.Description != "120.0 W" {
+		t.Fatalf("sell Description = %q, want 120.0 W", sell.Description)
+	}
+	buyTotal := makeSampleProperty(time.Time{}, [3]byte{0x05, 0xff, 0x01}, 0xf5, []byte{0x00, 0x01, 0xe2, 0x08})
+	if buyTotal.Float == nil || *buyTotal.Float != 123.4 {
+		t.Fatalf("buyTotal Float = %v, want 123.4", buyTotal.Float)
+	}
+	if buyTotal.Description != "123.400 kWh" {
+		t.Fatalf("buyTotal Description = %q, want 123.400 kWh", buyTotal.Description)
+	}
+}
+
+func TestDeriveECHONETSummaryUsesControllerGridAndLoad(t *testing.T) {
 	sample := Sample{
 		Source: "echonet",
 		Properties: []SampleProperty{
 			{EOJ: "027901", EPC: "e0", Float: floatPtr(2040)},
-			{EOJ: "05ff01", EPC: "f2", Float: floatPtr(1200)},
+			{EOJ: "027d01", EPC: "d3", Float: floatPtr(500)},
+			{EOJ: "05ff01", EPC: "f2", Float: floatPtr(120)},
+			{EOJ: "05ff01", EPC: "f3", Float: floatPtr(0)},
 		},
 	}
 	deriveECHONETSummary(&sample)
-	if sample.GridWatts == nil || *sample.GridWatts != -1200 {
-		t.Fatalf("GridWatts = %v, want -1200", sample.GridWatts)
+	if sample.GridWatts == nil || *sample.GridWatts != -120 {
+		t.Fatalf("GridWatts = %v, want -120", sample.GridWatts)
+	}
+	if sample.LoadWatts == nil || *sample.LoadWatts != 1420 {
+		t.Fatalf("LoadWatts = %v, want 1420", sample.LoadWatts)
 	}
 }
 
