@@ -56,3 +56,18 @@ func TestBuildSourceSavesExplicitECHONETAddr(t *testing.T) {
 		t.Fatalf("saved ECHONETAddr = %q, want 192.168.100.202", saved.ECHONETAddr)
 	}
 }
+
+func TestHasMonitorObject(t *testing.T) {
+	if hasMonitorObject([]ECHONETObject{{EOJ: [3]byte{0x05, 0xff, 0x01}}}) {
+		t.Fatal("controller-only node should not be selected as monitor")
+	}
+	if !hasMonitorObject([]ECHONETObject{
+		{EOJ: [3]byte{0x05, 0xff, 0x01}},
+		{EOJ: [3]byte{0x02, 0x79, 0x01}},
+	}) {
+		t.Fatal("node with PV object should be selected as monitor")
+	}
+	if !hasMonitorObject([]ECHONETObject{{EOJ: [3]byte{0x02, 0x7d, 0x01}}}) {
+		t.Fatal("node with battery object should be selected as monitor")
+	}
+}

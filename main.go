@@ -105,7 +105,7 @@ func buildSource(kind, sourceURL, echonetAddr, echonetFields string, fullScan bo
 			echonetAddr = cfg.ECHONETAddr
 		}
 		if echonetAddr == "" {
-			discovered, err := discoverFirstECHONETAddr(context.Background(), 5*time.Second)
+			discovered, err := discoverECHONETMonitorAddr(context.Background(), 5*time.Second)
 			if err != nil {
 				return nil, err
 			}
@@ -129,7 +129,7 @@ func buildSource(kind, sourceURL, echonetAddr, echonetFields string, fullScan bo
 	}
 }
 
-func discoverFirstECHONETAddr(parent context.Context, timeout time.Duration) (string, error) {
+func discoverECHONETMonitorAddr(parent context.Context, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	nodes, err := DiscoverECHONETNodes(ctx)
@@ -139,5 +139,25 @@ func discoverFirstECHONETAddr(parent context.Context, timeout time.Duration) (st
 	if len(nodes) == 0 {
 		return "", errors.New("no ECHONET Lite nodes found; use -echonet-addr to specify one")
 	}
+	for _, node := range nodes {
+		objects, err := NewECHONETScanner(node.Addr).readInstanceList(ctx)
+		if err != nil {
+			continue
+		}
+		if hasMonitorObject(objects) {
+			return node.Addr, nil
+		}
+	}
 	return nodes[0].Addr, nil
+}
+
+func hasMonitorObject(objects []ECHONETObject) bool {
+	for _, object := range objects {
+		class := uint16(object.EOJ[0])<<8 | uint16(object.EOJ[1])
+		switch class {
+		case 0x0279, 0x027d:
+			return true
+		}
+	}
+	return false
 }
