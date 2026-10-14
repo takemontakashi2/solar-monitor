@@ -23,13 +23,19 @@ func runServer(args []string) {
 	fs := flag.NewFlagSet("solar-monitor", flag.ExitOnError)
 	addr := fs.String("addr", ":8080", "HTTP listen address")
 	data := fs.String("data", "data/solar.db", "SQLite data file")
+	configPath := fs.String("config", "data/config.json", "config file")
 	interval := fs.Duration("interval", 60*time.Second, "collection interval")
-	sourceKind := fs.String("source", "mock", "source type: mock, http-json, or echonet")
+	sourceKind := fs.String("source", "echonet", "source type: echonet, mock, or http-json")
 	sourceURL := fs.String("source-url", "", "HTTP JSON source URL")
 	echonetAddr := fs.String("echonet-addr", "", "ECHONET Lite target IPv4 address")
 	echonetFields := fs.String("echonet-fields", "pv=027901:e0,today=027901:e1:0.001", "ECHONET fields: name=EOJ:EPC[:scale], comma-separated")
 	fullScan := fs.Bool("full-scan", false, "run a full ECHONET property scan on every collection")
 	_ = fs.Parse(args)
+
+	cfg, err := LoadConfig(*configPath)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	store, err := NewStore(*data)
 	if err != nil {
@@ -37,7 +43,10 @@ func runServer(args []string) {
 	}
 	defer store.Close()
 
-	source, err := buildSource(*sourceKind, *sourceURL, *echonetAddr, *echonetFields, *fullScan)
+	source, err := buildSource(*sourceKind, *sourceURL, *echonetAddr, *echonetFields, *fullScan, cfg, func(updated Config) error {
+		cfg = updated
+		return SaveConfig(*configPath, updated)
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -82,7 +91,7 @@ func runScan(args []string) {
 	}
 }
 
-func buildSource(kind, sourceURL, echonetAddr, echonetFields string, fullScan bool) (Source, error) {
+func buildSource(kind, sourceURL, echonetAddr, echonetFields string, fullScan bool, cfg Config, saveConfig func(Config) error) (Source, error) {
 	switch kind {
 	case "mock":
 		return NewMockSource(), nil
@@ -93,11 +102,22 @@ func buildSource(kind, sourceURL, echonetAddr, echonetFields string, fullScan bo
 		return NewHTTPJSONSource(sourceURL), nil
 	case "echonet":
 		if echonetAddr == "" {
-			discovered, err := discoverFirstECHONETAddr(context.Background(), 3*time.Second)
+			echonetAddr = cfg.ECHONETAddr
+		}
+		if echonetAddr == "" {
+			discovered, err := discoverFirstECHONETAddr(context.Background(), 5*time.Second)
 			if err != nil {
 				return nil, err
 			}
 			echonetAddr = discovered
+			log.Printf("discovered ECHONET Lite node: %s", echonetAddr)
+		}
+		if cfg.ECHONETAddr != echonetAddr && saveConfig != nil {
+			cfg.ECHONETAddr = echonetAddr
+			if err := saveConfig(cfg); err != nil {
+				return nil, err
+			}
+			log.Printf("saved ECHONET Lite node to config: %s", echonetAddr)
 		}
 		fields, err := parseECHONETFields(echonetFields)
 		if err != nil {

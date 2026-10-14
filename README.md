@@ -12,18 +12,21 @@ Pure Go SQLiteで記録する、家庭用太陽光発電の記録・表示サー
 
 ```sh
 go build -o solar-monitor .
-./solar-monitor \
-  -addr :8080 \
-  -data data/solar.db \
-  -interval 60s \
-  -source echonet \
-  -echonet-addr 192.168.100.202
+./solar-monitor
 ```
+
+初期設定ではECHONET Lite実機から取得します。初回起動時にマルチキャスト探索でモニターを探し、見つかったIPアドレスを `data/config.json` に保存します。次回以降は保存したアドレスを使います。
 
 タブレットからは同じLAN内で以下を開きます。
 
 ```text
 http://<このPCやRaspberry PiのIPアドレス>:8080/
+```
+
+HTTPポートや保存先を変える場合だけ、起動オプションを指定します。
+
+```sh
+./solar-monitor -addr :8081 -data data/solar.db
 ```
 
 ## GitHubで管理する
@@ -54,7 +57,7 @@ git push -u origin main
 
 ## データ取得方式
 
-`-source` を指定しない場合はデモ用の疑似データです。
+デモ用の疑似データで動かす場合は `-source mock` を指定します。
 
 ```sh
 ./solar-monitor -source mock
@@ -110,13 +113,13 @@ git push -u origin main
 同じLANにいる端末から、自動探索を試す場合は以下です。
 
 ```sh
-./solar-monitor -source echonet
+./solar-monitor
 ```
 
 起動後の初回収集は、取得できるプロパティをできるだけ拾うためにフルスキャンします。通常運用では2回目以降は高速なバッチ取得になります。毎回フルスキャンしたい場合は以下です。
 
 ```sh
-./solar-monitor -source echonet -full-scan
+./solar-monitor -full-scan
 ```
 
 ECHONET Lite はUDP `3610` を使います。端末側のファイアウォールでUDP通信が止まっている場合は許可してください。
@@ -132,7 +135,6 @@ today=027901:e1:0.001
 
 ```sh
 ./solar-monitor \
-  -source echonet \
   -echonet-addr 192.168.100.202 \
   -echonet-fields "pv=027901:e0,today=027901:e1:0.001"
 ```
