@@ -4,7 +4,7 @@ Pure Go SQLiteで記録する、家庭用太陽光発電の記録・表示サー
 単一バイナリとしてビルドでき、タブレットからブラウザで閲覧できます。
 
 要望と仕様の整理は [docs/SPEC.md](docs/SPEC.md) にまとめています。
-ビルドや調査に使うパッケージも同じ仕様書に記録しています。
+実機調査の詳細は [docs/echonet-findings.md](docs/echonet-findings.md) に、ビルドや調査に使うパッケージは仕様書に記録しています。
 
 ## 起動
 
@@ -27,6 +27,18 @@ HTTPポートや保存先を変える場合だけ、起動オプションを指�
 
 ```sh
 ./solar-monitor -addr :8081 -data data/solar.db
+```
+
+Windows版は次のように起動します。
+
+```powershell
+.\solar-monitor.exe
+```
+
+探索結果が意図した機器でない場合は、一度だけ対象IPを指定すると `data/config.json` が更新されます。
+
+```powershell
+.\solar-monitor.exe -echonet-addr 192.168.100.202
 ```
 
 ## GitHubで管理する
@@ -79,7 +91,7 @@ git push -u origin main
 ./solar-monitor -source http-json -source-url http://192.168.1.50/solar.json
 ```
 
-`grid_watts` は、正の値を買電、負の値を売電として扱う想定です。
+`grid_watts` は、正の値を買電、負の値を売電として扱います。
 
 ## ECHONET Liteをスキャンする
 
@@ -124,12 +136,19 @@ git push -u origin main
 
 ECHONET Lite はUDP `3610` を使います。端末側のファイアウォールでUDP通信が止まっている場合は許可してください。
 
-初期設定では以下のプロパティを読みに行きます。
+SHARP JH-RWL8環境では、標準の対応属性一覧 `9f` に依存せず、実測済みのプロパティを直接読みます。代表値には以下を使います。
 
 ```text
-pv=027901:e0
-today=027901:e1:0.001
+発電:             027901:e0
+積算発電電力量:   027901:e1 (0.001 kWh)
+蓄電池充放電電力: 027d01:d3 (+が充電、-が放電)
+瞬時売電電力:     05ff01:f2 (0.1 W)
+瞬時買電電力:     05ff01:f3 (0.1 W)
+積算売電電力量:   05ff01:f4 (0.001 kWh)
+積算買電電力量:   05ff01:f5 (0.001 kWh)
 ```
+
+消費電力は `発電 + 買電 - 蓄電池充電電力 - 売電` で算出します。グラフには直近720件（標準の60秒間隔で約12時間）の発電・消費・買電/売電を表示します。上部に色付き凡例があり、縦軸はkW、横軸は時刻です。買電/売電の線は絶対値で表示します。
 
 機種や設定でEOJ/EPCが違う場合は、以下のように差し替えられます。
 
@@ -152,7 +171,7 @@ CNV機種: B002
 蓄電池機種: T02
 ```
 
-## 次に差し替える場所
+## 開発
 
 実機のパワコン、HEMS、スマートメーターに合わせて `Source` インターフェースを実装します。
 
@@ -162,4 +181,10 @@ type Source interface {
 }
 ```
 
-機器が決まれば、ECHONET Lite、Modbus、メーカーAPI、ローカルHTTPなどの取得処理をここへ追加します。
+テストとビルドは次のコマンドで実行します。SQLiteはバイナリに含まれるため、実行時に別途導入する必要はありません。
+
+```sh
+go test ./...
+go build -o solar-monitor .
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o solar-monitor.exe .
+```

@@ -34,6 +34,9 @@ const indexHTML = `<!doctype html>
     .error-ok { color: #62675e; }
     .error-bad { color: #bd2d2d; }
     .chart { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 12px; margin-bottom: 18px; }
+    .chart-legend { display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 2px 6px 8px; color: #4f554c; font-size: 13px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 7px; }
+    .legend-line { width: 24px; height: 3px; border-radius: 2px; }
     canvas { width: 100%; height: 360px; display: block; }
     .panel { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 16px; margin-bottom: 18px; }
     .panel h2 { font-size: 18px; margin: 0 0 12px; }
@@ -75,7 +78,14 @@ const indexHTML = `<!doctype html>
     <div class="card"><div class="label">今日の発電</div><div class="value"><span id="today">--</span><span class="unit">kWh</span></div></div>
   </section>
   <section class="prop-grid" id="selectedProps"></section>
-  <section class="chart"><canvas id="chart"></canvas></section>
+  <section class="chart">
+    <div class="chart-legend" aria-label="グラフ凡例">
+      <span class="legend-item"><span class="legend-line" style="background:#d19b1d"></span>発電</span>
+      <span class="legend-item"><span class="legend-line" style="background:#2f6f73"></span>消費</span>
+      <span class="legend-item"><span class="legend-line" style="background:#8357a4"></span>買電 / 売電（絶対値）</span>
+    </div>
+    <canvas id="chart"></canvas>
+  </section>
   <section class="health-grid" id="healthGrid"></section>
   <section class="panel" id="settingsPanel" hidden>
     <h2>表示する値</h2>
@@ -253,19 +263,30 @@ function draw(samples) {
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, rect.width, rect.height);
-  const pad = {left: 44, right: 18, top: 24, bottom: 44};
+  const pad = {left: 58, right: 18, top: 24, bottom: 44};
   const values = samples.flatMap(s => [s.pv_watts, s.load_watts, has(s.grid_watts) ? Math.abs(s.grid_watts) : null]).filter(has);
-  const max = Math.max(1000, ...values);
-  ctx.strokeStyle = '#d8ddd0';
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.top + (rect.height - pad.top - pad.bottom) * i / 4;
-    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(rect.width - pad.right, y); ctx.stroke();
-  }
+  const max = Math.ceil(Math.max(1000, ...values) / 1000) * 1000;
+  drawPowerAxis(ctx, max, rect, pad);
   drawTimeAxis(ctx, samples, rect, pad);
   line(samples, 'pv_watts', '#d19b1d', max, rect, pad);
   line(samples, 'load_watts', '#2f6f73', max, rect, pad);
   line(samples, 'grid_watts', '#8357a4', max, rect, pad, true);
+}
+function drawPowerAxis(ctx, max, rect, pad) {
+  ctx.strokeStyle = '#d8ddd0';
+  ctx.fillStyle = '#62675e';
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + (rect.height - pad.top - pad.bottom) * i / 4;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(rect.width - pad.right, y); ctx.stroke();
+    ctx.fillText(String(max * (4 - i) / 4 / 1000), pad.left - 8, y);
+  }
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText('kW', 6, 2);
 }
 function drawTimeAxis(ctx, samples, rect, pad) {
   if (samples.length === 0) return;
