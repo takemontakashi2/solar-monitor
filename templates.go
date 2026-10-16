@@ -84,6 +84,7 @@ const indexHTML = `<!doctype html>
       <span class="legend-item"><span class="legend-line" style="background:#2f6f73"></span>消費</span>
       <span class="legend-item"><span class="legend-line" style="background:#8357a4"></span>買電 / 売電（絶対値）</span>
     </div>
+    <label class="label">グラフ表示 <select id="chartSmoothing"><option value="5">5分平均</option><option value="0">実測値</option></select></label>
     <canvas id="chart"></canvas>
   </section>
   <section class="health-grid" id="healthGrid"></section>
@@ -118,6 +119,8 @@ const healthEpcs = ['80', '88', '86'];
 const healthKeys = healthDevices.flatMap(device => healthEpcs.map(epc => device.eoj + ':' + epc));
 const chartSampleLimit = 720;
 let selected = new Set(JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultSelected);
+let chartSamples = [];
+let latestSampleTime = 0;
 let settingsOpen = localStorage.getItem(settingsOpenKey) === 'true';
 const has = (v) => typeof v === 'number' && Number.isFinite(v);
 const fmtKW = (w) => has(w) ? (w / 1000).toFixed(2) : '--';
@@ -144,6 +147,8 @@ async function refresh() {
   const samples = await res.json();
   const latest = samples[samples.length - 1];
   if (!latest) return;
+  latestSampleTime = new Date(latest.time).getTime();
+  chartSamples = samples;
   $('pv').textContent = fmtKW(latest.pv_watts);
   $('load').textContent = fmtKW(latest.load_watts);
   $('grid').textContent = has(latest.grid_watts) ? fmtKW(Math.abs(latest.grid_watts)) : '--';
@@ -180,8 +185,14 @@ async function refreshStats() {
   renderStats(stats || []);
 }
 function renderSelectedProperties(properties) {
-  const selectedProps = properties.filter(p => selected.has(keyOf(p)));
-  $('selectedProps').innerHTML = selectedProps.map(p => '<div class="card"><div class="label">' + escapeHTML(labelOf(p)) + '</div><div class="prop-value">' + escapeHTML(displayValue(p)) + '</div><div class="prop-key">' + escapeHTML(keyOf(p)) + '</div></div>').join('');
+  const byKey = new Map(properties.map(p => [keyOf(p), p]));
+  $('selectedProps').innerHTML = [...selected].map(key => {
+    const p = byKey.get(key);
+    const older = p && new Date(p.time).getTime() < latestSampleTime;
+    const stale = p && Date.now() - new Date(p.time).getTime() > 5 * 60 * 1000;
+    const note = p ? (stale ? '更新待ち・' : older ? '前回値・' : '') + new Date(p.time).toLocaleString() : '未取得';
+    return '<div class="card"><div class="label">' + escapeHTML(p ? labelOf(p) : key) + '</div><div class="prop-value">' + escapeHTML(p ? displayValue(p) : '--') + '</div><div class="prop-key">' + escapeHTML(key) + '<br>' + escapeHTML(note) + '</div></div>';
+  }).join('');
 }
 function renderHealth(properties) {
   const byKey = new Map(properties.map(p => [keyOf(p), p]));
@@ -220,7 +231,6 @@ function errorClass(errorState) {
   return hasError(errorState) ? 'error-bad' : 'error-ok';
 }
 function renderProperties(properties) {
-  renderSelectedProperties(properties);
   const groups = groupByDevice(properties);
   $('propertyChooser').innerHTML = groups.map(group => '<div class="device-group"><div class="device-title">' + escapeHTML(deviceName(group.eoj)) + ' <small>' + escapeHTML(group.eoj) + '</small></div><div class="choice-grid">' + group.items.map(p => {
     const key = keyOf(p);
@@ -254,7 +264,32 @@ function groupByDevice(properties) {
 function escapeHTML(value) {
   return String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 }
+function smoothSamples(samples, minutes) {
+  if (!minutes) return samples;
+  return samples.map((sample, index) => {
+    const result = {...sample};
+    for (const key of ['pv_watts', 'load_watts', 'grid_watts']) {
+      if (!has(sample[key])) continue;
+      let sum = 0, count = 0;
+      for (let j = index; j >= 0; j--) {
+        if (new Date(sample.time) - new Date(samples[j].time) >= minutes * 60000) break;
+        if (!has(samples[j][key])) break;
+        if (j < index && new Date(samples[j + 1].time) - new Date(samples[j].time) > minutes * 60000) break;
+        sum += key === 'grid_watts' ? Math.abs(samples[j][key]) : samples[j][key];
+        count++;
+      }
+      result[key] = sum / count;
+    }
+    return result;
+  });
+}
+function sampleX(samples, index, rect, pad) {
+  const start = new Date(samples[0].time).getTime();
+  const span = new Date(samples[samples.length - 1].time).getTime() - start;
+  return pad.left + (rect.width - pad.left - pad.right) * (span > 0 ? (new Date(samples[index].time).getTime() - start) / span : 0);
+}
 function draw(samples) {
+  samples = smoothSamples(samples, Number($('chartSmoothing').value));
   const canvas = $('chart');
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -290,7 +325,6 @@ function drawPowerAxis(ctx, max, rect, pad) {
 }
 function drawTimeAxis(ctx, samples, rect, pad) {
   if (samples.length === 0) return;
-  const plotWidth = rect.width - pad.left - pad.right;
   const y = rect.height - pad.bottom;
   ctx.fillStyle = '#62675e';
   ctx.strokeStyle = '#d8ddd0';
@@ -301,7 +335,7 @@ function drawTimeAxis(ctx, samples, rect, pad) {
   const ticks = Math.min(5, samples.length);
   for (let i = 0; i < ticks; i++) {
     const index = ticks === 1 ? 0 : Math.round((samples.length - 1) * i / (ticks - 1));
-    const x = pad.left + plotWidth * index / Math.max(1, samples.length - 1);
+    const x = sampleX(samples, index, rect, pad);
     const label = new Date(samples[index].time).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
     ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 5); ctx.stroke();
     ctx.fillText(label, x, y + 8);
@@ -315,15 +349,18 @@ function line(samples, key, color, max, rect, pad, abs) {
   ctx.beginPath();
   let started = false;
   samples.forEach((s, i) => {
-    const x = pad.left + (rect.width - pad.left - pad.right) * i / (samples.length - 1);
+    const x = sampleX(samples, i, rect, pad);
     const raw = s[key];
-    if (!has(raw)) return;
+    if (!has(raw)) { started = false; return; }
+    if (i > 0 && new Date(s.time) - new Date(samples[i - 1].time) > 5 * 60000) started = false;
     const val = abs ? Math.abs(raw) : raw;
     const y = rect.height - pad.bottom - (rect.height - pad.top - pad.bottom) * val / max;
     if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, y); }
   });
   ctx.stroke();
 }
+$('chartSmoothing').addEventListener('change', () => draw(chartSamples));
+window.addEventListener('resize', () => draw(chartSamples));
 $('settingsButton').addEventListener('click', () => {
   settingsOpen = !settingsOpen;
   localStorage.setItem(settingsOpenKey, String(settingsOpen));

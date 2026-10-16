@@ -163,3 +163,90 @@ func TestStoreLatestPropertiesFiltersKeys(t *testing.T) {
 		t.Fatalf("unexpected properties: %#v", props)
 	}
 }
+
+func TestSummaryDistinguishesMissingAndZero(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "solar.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	base := time.Now()
+	for i, v := range []*float64{nil, floatPtr(0), floatPtr(123)} {
+		if err := store.Append(Sample{Time: base.Add(time.Duration(i) * time.Minute), Source: "echonet", PVWatts: v, LoadWatts: v, GridWatts: v, TodayKWh: v}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	samples, err := store.LatestSummaries(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, s := range samples {
+		for _, v := range []*float64{s.PVWatts, s.LoadWatts, s.GridWatts, s.TodayKWh} {
+			if i == 0 {
+				if v != nil {
+					t.Fatal("missing value became zero")
+				}
+			} else if v == nil || *v != []float64{0, 0, 123}[i] {
+				t.Fatalf("wrong value at %d: %v", i, v)
+			}
+		}
+	}
+}
+
+func TestLatestPropertySurvivesMissingCollectionAndRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "solar.db")
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC()
+	for i := 0; i < 3; i++ {
+		s := Sample{Time: base.Add(time.Duration(i) * time.Minute), Source: "echonet"}
+		if i < 2 {
+			s.Properties = []SampleProperty{{EOJ: "027d01", EPC: "e4", Float: floatPtr(float64(50 + i))}}
+		}
+		if err := store.Append(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store.Close()
+	store, err = NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	props, err := store.LatestProperties(1, map[string]struct{}{"027d01:e4": {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(props) != 1 || props[0].Float == nil || *props[0].Float != 51 || !props[0].Time.Equal(base.Add(time.Minute)) {
+		t.Fatalf("lost last successful reading: %+v", props)
+	}
+}
+
+func TestLegacyDatabaseMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "solar.db")
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(Sample{Time: time.Now(), Source: "echonet", Properties: []SampleProperty{{EOJ: "027901", EPC: "e0", Float: floatPtr(0)}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`ALTER TABLE samples DROP COLUMN valid_fields`); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	store, err = NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	samples, err := store.LatestSummaries(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) != 1 || samples[0].PVWatts == nil || *samples[0].PVWatts != 0 || samples[0].TodayKWh != nil {
+		t.Fatalf("legacy missing/zero reconstruction failed: %+v", samples)
+	}
+}

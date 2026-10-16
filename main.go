@@ -8,8 +8,26 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"time"
 )
+
+var version = "0.2.0"
+
+func versionInfo() string {
+	info := "solar-monitor " + version
+	if build, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range build.Settings {
+			if setting.Key == "vcs.revision" {
+				info += " (" + setting.Value + ")"
+			}
+			if setting.Key == "vcs.modified" && setting.Value == "true" {
+				info += " dirty"
+			}
+		}
+	}
+	return info
+}
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "scan" {
@@ -21,6 +39,9 @@ func main() {
 
 func runServer(args []string) {
 	fs := flag.NewFlagSet("solar-monitor", flag.ExitOnError)
+	var showVersion bool
+	fs.BoolVar(&showVersion, "v", false, "show version and exit")
+	fs.BoolVar(&showVersion, "version", false, "show version and exit")
 	addr := fs.String("addr", ":8080", "HTTP listen address")
 	data := fs.String("data", "data/solar.db", "SQLite data file")
 	configPath := fs.String("config", "data/config.json", "config file")
@@ -31,6 +52,10 @@ func runServer(args []string) {
 	echonetFields := fs.String("echonet-fields", "pv=027901:e0,today=027901:e1:0.001", "ECHONET fields: name=EOJ:EPC[:scale], comma-separated")
 	fullScan := fs.Bool("full-scan", false, "run a full ECHONET property scan on every collection")
 	_ = fs.Parse(args)
+	if showVersion {
+		fmt.Println(versionInfo())
+		return
+	}
 
 	cfg, err := LoadConfig(*configPath)
 	if err != nil {

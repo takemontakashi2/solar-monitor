@@ -67,6 +67,33 @@ func (s *Store) init() error {
 		CREATE INDEX IF NOT EXISTS properties_time_idx ON properties(time);
 		CREATE INDEX IF NOT EXISTS properties_key_idx ON properties(eoj, epc, time);
 	`)
+	if err != nil {
+		return err
+	}
+	// Preserve missing readings separately from genuine zeroes, including on old databases.
+	rows, err := s.db.Query(`PRAGMA table_info(samples)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, kind string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		found = found || name == "valid_fields"
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if !found {
+		_, err = s.db.Exec(`ALTER TABLE samples ADD COLUMN valid_fields INTEGER NOT NULL DEFAULT -1`)
+	}
 	return err
 }
 
@@ -78,8 +105,8 @@ func (s *Store) Append(sample Sample) error {
 	defer tx.Rollback()
 
 	res, err := tx.Exec(`
-		INSERT INTO samples (time, pv_watts, load_watts, grid_watts, today_kwh, source)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO samples (time, pv_watts, load_watts, grid_watts, today_kwh, source, valid_fields)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`,
 		sample.Time.Format(time.RFC3339Nano),
 		valueOrZero(sample.PVWatts),
@@ -87,6 +114,7 @@ func (s *Store) Append(sample Sample) error {
 		valueOrZero(sample.GridWatts),
 		valueOrZero(sample.TodayKWh),
 		sample.Source,
+		sampleValidity(sample),
 	)
 	if err != nil {
 		return err
@@ -136,7 +164,7 @@ func (s *Store) LatestSummaries(limit int) ([]Sample, error) {
 
 func (s *Store) latest(limit int, includeProperties bool) ([]Sample, error) {
 	rows, err := s.db.Query(`
-		SELECT id, time, pv_watts, load_watts, grid_watts, today_kwh, source
+		SELECT id, time, pv_watts, load_watts, grid_watts, today_kwh, source, valid_fields
 		FROM samples
 		ORDER BY time DESC, id DESC
 		LIMIT ?
@@ -147,31 +175,39 @@ func (s *Store) latest(limit int, includeProperties bool) ([]Sample, error) {
 	defer rows.Close()
 
 	ids := []int64{}
+	legacy := map[int64]bool{}
 	out := make([]Sample, 0, limit)
 	for rows.Next() {
 		var sample Sample
 		var id int64
 		var rawTime string
 		var pv, load, grid, today float64
-		err := rows.Scan(&id, &rawTime, &pv, &load, &grid, &today, &sample.Source)
+		var valid int
+		err := rows.Scan(&id, &rawTime, &pv, &load, &grid, &today, &sample.Source, &valid)
 		if err != nil {
 			return nil, err
 		}
 		sample.Time, err = time.Parse(time.RFC3339Nano, rawTime)
-		if sample.Source != "echonet" {
+		if valid >= 0 {
+			if valid&1 != 0 {
+				sample.PVWatts = floatPtr(pv)
+			}
+			if valid&2 != 0 {
+				sample.LoadWatts = floatPtr(load)
+			}
+			if valid&4 != 0 {
+				sample.GridWatts = floatPtr(grid)
+			}
+			if valid&8 != 0 {
+				sample.TodayKWh = floatPtr(today)
+			}
+		} else if sample.Source != "echonet" {
 			sample.PVWatts = floatPtr(pv)
 			sample.LoadWatts = floatPtr(load)
 			sample.GridWatts = floatPtr(grid)
 			sample.TodayKWh = floatPtr(today)
-		} else if !includeProperties {
-			sample.PVWatts = floatPtr(pv)
-			sample.TodayKWh = floatPtr(today)
-			if load != 0 {
-				sample.LoadWatts = floatPtr(load)
-			}
-			if grid != 0 {
-				sample.GridWatts = floatPtr(grid)
-			}
+		} else {
+			legacy[id] = true
 		}
 		if err != nil {
 			return nil, err
@@ -186,10 +222,11 @@ func (s *Store) latest(limit int, includeProperties bool) ([]Sample, error) {
 		out[i], out[j] = out[j], out[i]
 		ids[i], ids[j] = ids[j], ids[i]
 	}
-	if !includeProperties {
-		return out, nil
-	}
+	rows.Close()
 	for i, id := range ids {
+		if !includeProperties && !legacy[id] {
+			continue
+		}
 		props, err := s.propertiesForSample(id)
 		if err != nil {
 			return nil, err
@@ -198,8 +235,21 @@ func (s *Store) latest(limit int, includeProperties bool) ([]Sample, error) {
 		if out[i].Source == "echonet" {
 			deriveECHONETSummary(&out[i])
 		}
+		if !includeProperties {
+			out[i].Properties = nil
+		}
 	}
 	return out, nil
+}
+
+func sampleValidity(sample Sample) int {
+	mask := 0
+	for i, value := range []*float64{sample.PVWatts, sample.LoadWatts, sample.GridWatts, sample.TodayKWh} {
+		if value != nil {
+			mask |= 1 << i
+		}
+	}
+	return mask
 }
 
 func (s *Store) propertiesForSample(sampleID int64) ([]SampleProperty, error) {
@@ -218,6 +268,9 @@ func (s *Store) propertiesForSample(sampleID int64) ([]SampleProperty, error) {
 }
 
 func (s *Store) LatestProperties(limit int, keys map[string]struct{}) ([]SampleProperty, error) {
+	if limit == 1 {
+		return s.latestPropertyValues(keys)
+	}
 	args := []any{limit}
 	filter := ""
 	if len(keys) > 0 {
@@ -251,6 +304,35 @@ func (s *Store) LatestProperties(limit int, keys map[string]struct{}) ([]SampleP
 	}
 	defer rows.Close()
 
+	return scanProperties(rows)
+}
+
+// Return the last successful reading of each property, retaining its original timestamp.
+func (s *Store) latestPropertyValues(keys map[string]struct{}) ([]SampleProperty, error) {
+	filter := ""
+	args := []any{}
+	clauses := []string{}
+	for key := range keys {
+		eoj, epc, ok := strings.Cut(key, ":")
+		if !ok {
+			continue
+		}
+		clauses = append(clauses, "(eoj = ? AND epc = ?)")
+		args = append(args, eoj, epc)
+	}
+	if len(clauses) > 0 {
+		filter = " WHERE " + strings.Join(clauses, " OR ")
+	}
+	rows, err := s.db.Query(`
+		SELECT time, eoj, epc, name, raw, unsigned_value, signed_value, float_value, description
+		FROM properties WHERE id IN (
+			SELECT (SELECT p.id FROM properties p WHERE p.eoj = k.eoj AND p.epc = k.epc ORDER BY p.time DESC, p.id DESC LIMIT 1)
+			FROM (SELECT DISTINCT eoj, epc FROM properties`+filter+`) k
+		) ORDER BY eoj, epc`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 	return scanProperties(rows)
 }
 
