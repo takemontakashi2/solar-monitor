@@ -13,13 +13,14 @@ import (
 )
 
 type ECHONETSource struct {
-	addr        string
-	fields      map[string]ECHONETProperty
-	tid         uint16
-	fullScan    bool
-	nextRequest time.Time
-	fixedRead   map[string]bool
-	diagnostics collectionDiagnostics
+	addr          string
+	fields        map[string]ECHONETProperty
+	tid           uint16
+	fullScan      bool
+	nextRequest   time.Time
+	fixedRead     map[string]bool
+	rejectedFixed map[string]bool
+	diagnostics   collectionDiagnostics
 }
 
 type ECHONETProperty struct {
@@ -243,10 +244,32 @@ func (s *ECHONETSource) readRawProperties(ctx context.Context, conn net.PacketCo
 			continue
 		}
 		if buf[10] == 0x52 {
-			return nil, fmt.Errorf("GET rejected by %s EOJ=%s", s.addr, formatEOJ(eoj))
+			// Decode the SNA property list before treating a property as rejected.
+			decoded := append([]byte(nil), buf[:n]...)
+			decoded[10] = 0x72
+			values, parseErr := echonetPropertiesData(decoded)
+			if parseErr != nil {
+				continue
+			}
+			rejected := false
+			for _, epc := range epcs {
+				if value, present := values[epc]; present && len(value) == 0 {
+					rejected = true
+					s.rememberFixedOutcome(eoj, epc, errGETRejected)
+				}
+			}
+			if rejected {
+				return nil, fmt.Errorf("%w by %s EOJ=%s", errGETRejected, s.addr, formatEOJ(eoj))
+			}
+			continue
 		}
 		values, err := echonetPropertiesDataFor(buf[:n], eoj)
 		if err == nil {
+			for _, epc := range epcs {
+				if len(values[epc]) > 0 {
+					s.rememberFixedOutcome(eoj, epc, nil)
+				}
+			}
 			return values, nil
 		}
 	}
@@ -494,7 +517,7 @@ func (s *ECHONETSource) pendingProperties(eoj [3]byte, candidates []byte) []byte
 	out := []byte{}
 	for _, epc := range candidates {
 		key := fmt.Sprintf("%s:%02x", formatEOJ(eoj), epc)
-		if !s.fullScan && s.fixedRead[key] {
+		if !s.fullScan && (s.fixedRead[key] || s.rejectedFixed[key]) {
 			continue
 		}
 		out = append(out, epc)
@@ -513,6 +536,9 @@ func (d *collectionDiagnostics) record(eoj [3]byte, epcs []byte, values map[byte
 	reason := "missing"
 	if err != nil {
 		reason = "error"
+		if errors.Is(err, errGETRejected) {
+			reason = "rejected"
+		}
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
 			d.Timeouts++
@@ -557,4 +583,22 @@ func prioritizeMeasurements(eoj [3]byte, candidates []byte) []byte {
 		}
 	}
 	return uniqueBytes(append(out, candidates...))
+}
+
+var errGETRejected = errors.New("GET rejected")
+
+func (s *ECHONETSource) rememberFixedOutcome(eoj [3]byte, epc byte, err error) {
+	object, property := formatEOJ(eoj), fmt.Sprintf("%02x", epc)
+	if !isFixedProperty(object, property) {
+		return
+	}
+	key := object + ":" + property
+	if errors.Is(err, errGETRejected) {
+		if s.rejectedFixed == nil {
+			s.rejectedFixed = map[string]bool{}
+		}
+		s.rejectedFixed[key] = true
+	} else if err == nil {
+		delete(s.rejectedFixed, key)
+	}
 }

@@ -51,6 +51,9 @@ func (a *App) CollectOnce(ctx context.Context) {
 		return
 	}
 	if source, ok := a.source.(*ECHONETSource); ok {
+		if err := a.store.SaveRejectedFixed(source.addr, source.rejectedFixed); err != nil {
+			log.Printf("save rejected fixed properties failed: %v", err)
+		}
 		if err := a.store.RecordFixedReads(source.addr, sample.Properties); err != nil {
 			log.Printf("save fixed property state failed: %v", err)
 		} else {

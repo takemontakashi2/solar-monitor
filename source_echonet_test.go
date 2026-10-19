@@ -150,3 +150,28 @@ func TestNormalRequestsExcludeFailingControllerAttributes(t *testing.T) {
 		}
 	}
 }
+
+func TestRejectedFixedFiltering(t *testing.T) {
+	s := NewECHONETSource("192.168.100.202", nil, false)
+	eoj := [3]byte{2, 0x7d, 1}
+	s.rememberFixedOutcome(eoj, 0xc7, fmt.Errorf("device: %w", errGETRejected))
+	s.rememberFixedOutcome(eoj, 0xd0, os.ErrDeadlineExceeded)
+	s.rememberFixedOutcome(eoj, 0xe4, errGETRejected)
+	got := s.pendingProperties(eoj, []byte{0xc7, 0xd0, 0xe4})
+	if containsByte(got, 0xc7) || !containsByte(got, 0xd0) || !containsByte(got, 0xe4) {
+		t.Fatalf("wrong filter: %x", got)
+	}
+	s.fullScan = true
+	if !containsByte(s.pendingProperties(eoj, []byte{0xc7}), 0xc7) {
+		t.Fatal("full scan must retry")
+	}
+	s.rememberFixedOutcome(eoj, 0xc7, nil)
+	if s.rejectedFixed["027d01:c7"] {
+		t.Fatal("success did not clear rejection")
+	}
+	d := collectionDiagnostics{}
+	d.record(eoj, []byte{0xc7}, nil, errGETRejected)
+	if d.Timeouts != 0 || len(d.Missing) != 1 || d.Missing[0] != "027d01:c7(rejected)" {
+		t.Fatalf("wrong diagnostic: %+v", d)
+	}
+}

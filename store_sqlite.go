@@ -40,6 +40,7 @@ func (s *Store) init() error {
 	_, err := s.db.Exec(`
 		PRAGMA journal_mode = WAL;
 		PRAGMA busy_timeout = 5000;
+        CREATE TABLE IF NOT EXISTS rejected_fixed (target TEXT NOT NULL, property_key TEXT NOT NULL, PRIMARY KEY(target,property_key));
         CREATE TABLE IF NOT EXISTS fixed_reads (
           target TEXT NOT NULL, property_key TEXT NOT NULL,
           PRIMARY KEY(target, property_key)
@@ -529,6 +530,42 @@ func (s *Store) RecordFixedReads(target string, props []SampleProperty) error {
 			continue
 		}
 		if _, err := tx.Exec(`INSERT OR IGNORE INTO fixed_reads(target,property_key) VALUES (?,?)`, target, p.EOJ+":"+p.EPC); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) RejectedFixed(target string) (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT property_key FROM rejected_fixed WHERE target=?`, target)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		out[key] = true
+	}
+	return out, rows.Err()
+}
+func (s *Store) SaveRejectedFixed(target string, rejected map[string]bool) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM rejected_fixed WHERE target=?`, target); err != nil {
+		return err
+	}
+	for key, active := range rejected {
+		if !active {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO rejected_fixed(target,property_key) VALUES (?,?)`, target, key); err != nil {
 			return err
 		}
 	}

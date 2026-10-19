@@ -294,3 +294,35 @@ func TestFixedReadsPersistPerTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestRejectedFixedPersistenceAndReset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rejected.db")
+	s, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveRejectedFixed("A", map[string]bool{"027d01:c7": true}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	a, err := s.RejectedFixed("A")
+	if err != nil || !a["027d01:c7"] {
+		t.Fatalf("lost rejection: %v %v", a, err)
+	}
+	b, err := s.RejectedFixed("B")
+	if err != nil || len(b) != 0 {
+		t.Fatalf("target cache leaked: %v %v", b, err)
+	}
+	if err := s.SaveRejectedFixed("A", nil); err != nil {
+		t.Fatal(err)
+	}
+	a, err = s.RejectedFixed("A")
+	if err != nil || len(a) != 0 {
+		t.Fatalf("reset failed: %v %v", a, err)
+	}
+}
