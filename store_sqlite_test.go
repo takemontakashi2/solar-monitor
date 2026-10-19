@@ -250,3 +250,47 @@ func TestLegacyDatabaseMigration(t *testing.T) {
 		t.Fatalf("legacy missing/zero reconstruction failed: %+v", samples)
 	}
 }
+
+func TestFixedReadsPersistPerTarget(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fixed.db")
+	s, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	props := []SampleProperty{{EOJ: "027901", EPC: "8a", Raw: "000001"}, {EOJ: "027d01", EPC: "e4", Raw: "32"}, {EOJ: "027901", EPC: "83", Raw: ""}}
+	if err := s.RecordFixedReads("192.168.100.202:3610", props); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	cached, err := s.FixedReads("192.168.100.202:3610")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cached) != 1 || !cached["027901:8a"] {
+		t.Fatalf("wrong cache: %v", cached)
+	}
+	src := NewECHONETSource("192.168.100.202", nil, false)
+	src.fixedRead = cached
+	got := src.pendingProperties([3]byte{2, 0x79, 1}, []byte{0x8a, 0x83, 0xe0, 0x80})
+	if containsByte(got, 0x8a) || !containsByte(got, 0x83) || !containsByte(got, 0xe0) || !containsByte(got, 0x80) {
+		t.Fatalf("wrong requests: %x", got)
+	}
+	src.fullScan = true
+	if !containsByte(src.pendingProperties([3]byte{2, 0x79, 1}, []byte{0x8a}), 0x8a) {
+		t.Fatal("explicit refresh must include fixed values")
+	}
+	other, err := s.FixedReads("192.168.100.126:3610")
+	if err != nil || len(other) != 0 {
+		t.Fatalf("target cache leaked: %v %v", other, err)
+	}
+	for _, epc := range []string{"80", "81", "86", "88", "89", "97", "98", "cf", "da", "e4", "d3"} {
+		if isFixedProperty("027d01", epc) {
+			t.Fatalf("dynamic property classified fixed: %s", epc)
+		}
+	}
+}

@@ -223,7 +223,7 @@ function renderSelectedProperties(properties) {
     const p = propertyCache.get(key);
     const older = p && new Date(p.time).getTime() < latestSampleTime;
     const stale = p && Date.now() - new Date(p.time).getTime() > 5 * 60 * 1000;
-    const note = p ? (stale ? '更新待ち・' : older ? '前回値・' : '') + new Date(p.time).toLocaleString() : '未取得';
+    const note = p ? (p.fixed ? '保存値・' : stale ? '更新待ち・' : older ? '前回値・' : '') + new Date(p.time).toLocaleString() : '未取得';
     return '<div class="card"><div class="label">' + escapeHTML(p ? labelOf(p) : key) + '</div><div class="prop-value">' + escapeHTML(p ? displayValue(p) : '--') + '</div><div class="prop-key">' + escapeHTML(key) + '<br>' + escapeHTML(note) + '</div></div>';
   }).join('');
 }

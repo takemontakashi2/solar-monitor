@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var version = "0.9.3"
+var version = "0.9.4"
 
 func versionInfo() string {
 	info := "solar-monitor " + version
@@ -76,6 +76,12 @@ func runServer(args []string) {
 		log.Fatal(err)
 	}
 
+	if echonet, ok := source.(*ECHONETSource); ok {
+		echonet.fixedRead, err = store.FixedReads(echonet.addr)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 	app := NewApp(store, source)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

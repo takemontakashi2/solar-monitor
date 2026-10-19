@@ -40,6 +40,10 @@ func (s *Store) init() error {
 	_, err := s.db.Exec(`
 		PRAGMA journal_mode = WAL;
 		PRAGMA busy_timeout = 5000;
+        CREATE TABLE IF NOT EXISTS fixed_reads (
+          target TEXT NOT NULL, property_key TEXT NOT NULL,
+          PRIMARY KEY(target, property_key)
+        );
 		CREATE TABLE IF NOT EXISTS samples (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			time TEXT NOT NULL,
@@ -349,6 +353,7 @@ func scanProperties(rows *sql.Rows) ([]SampleProperty, error) {
 		if err != nil {
 			return nil, err
 		}
+		prop.Fixed = isFixedProperty(prop.EOJ, prop.EPC)
 		prop.Time, err = time.Parse(time.RFC3339Nano, rawTime)
 		if err != nil {
 			return nil, err
@@ -494,4 +499,38 @@ func valueOf(v *float64) float64 {
 		return 0
 	}
 	return *v
+}
+
+func (s *Store) FixedReads(target string) (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT property_key FROM fixed_reads WHERE target = ?`, target)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		out[key] = true
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RecordFixedReads(target string, props []SampleProperty) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, p := range props {
+		if !isFixedProperty(p.EOJ, p.EPC) || p.Raw == "" {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO fixed_reads(target,property_key) VALUES (?,?)`, target, p.EOJ+":"+p.EPC); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

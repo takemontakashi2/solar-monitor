@@ -16,6 +16,7 @@ type Sample struct {
 }
 
 type SampleProperty struct {
+	Fixed       bool      `json:"fixed,omitempty"`
 	Time        time.Time `json:"time,omitempty"`
 	EOJ         string    `json:"eoj"`
 	EPC         string    `json:"epc"`

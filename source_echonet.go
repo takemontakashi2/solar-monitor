@@ -17,6 +17,7 @@ type ECHONETSource struct {
 	tid             uint16
 	fullScan        bool
 	initialScanDone bool
+	fixedRead       map[string]bool
 }
 
 type ECHONETProperty struct {
@@ -67,6 +68,7 @@ func (s *ECHONETSource) readAllProperties(ctx context.Context, t time.Time, full
 			}
 			candidates = propertyMap
 		}
+		candidates = s.pendingProperties(object, candidates)
 		for _, batch := range propertyBatches(candidates, 1) {
 			values, err := s.readRawProperties(ctx, conn, udpAddr, object, batch)
 			if err != nil {
@@ -433,4 +435,31 @@ func echonetPropertiesDataFor(packet []byte, eoj [3]byte) (map[byte][]byte, erro
 		return nil, fmt.Errorf("unexpected SEOJ %02x%02x%02x", packet[4], packet[5], packet[6])
 	}
 	return echonetPropertiesData(packet)
+}
+
+// Only identity and rated values are fixed; operating settings remain live.
+func isFixedProperty(eoj, epc string) bool {
+	switch epc {
+	case "82", "83", "8a", "8b", "8d":
+		return true
+	}
+	if strings.HasPrefix(eoj, "0279") {
+		return epc == "e8" || epc == "e9"
+	}
+	if strings.HasPrefix(eoj, "027d") {
+		return epc == "c7" || epc == "d0" || epc == "d1" || epc == "d2"
+	}
+	return false
+}
+
+func (s *ECHONETSource) pendingProperties(eoj [3]byte, candidates []byte) []byte {
+	out := []byte{}
+	for _, epc := range candidates {
+		key := fmt.Sprintf("%s:%02x", formatEOJ(eoj), epc)
+		if !s.fullScan && s.fixedRead[key] {
+			continue
+		}
+		out = append(out, epc)
+	}
+	return out
 }

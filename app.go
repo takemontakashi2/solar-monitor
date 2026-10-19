@@ -48,6 +48,20 @@ func (a *App) CollectOnce(ctx context.Context) {
 		log.Printf("store failed: %v", err)
 		return
 	}
+	if source, ok := a.source.(*ECHONETSource); ok {
+		if err := a.store.RecordFixedReads(source.addr, sample.Properties); err != nil {
+			log.Printf("save fixed property state failed: %v", err)
+		} else {
+			if source.fixedRead == nil {
+				source.fixedRead = map[string]bool{}
+			}
+			for _, p := range sample.Properties {
+				if isFixedProperty(p.EOJ, p.EPC) && p.Raw != "" {
+					source.fixedRead[p.EOJ+":"+p.EPC] = true
+				}
+			}
+		}
+	}
 	a.mu.Lock()
 	a.latest = sample
 	a.mu.Unlock()
