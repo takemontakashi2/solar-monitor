@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,4 +94,18 @@ func containsByte(values []byte, want byte) bool {
 		}
 	}
 	return false
+}
+
+func TestCollectionDiagnostics(t *testing.T) {
+	d := collectionDiagnostics{}
+	eoj := [3]byte{2, 0x79, 1}
+	d.record(eoj, []byte{0xe0}, map[byte][]byte{0xe0: {0, 0}}, nil)
+	d.record(eoj, []byte{0xe0, 0xe1}, map[byte][]byte{0xe0: {1}}, nil)
+	d.record(eoj, []byte{0xe0}, nil, fmt.Errorf("read: %w", os.ErrDeadlineExceeded))
+	if d.Requests != 3 || d.OK != 1 || d.Failed != 2 || d.Timeouts != 1 {
+		t.Fatalf("unexpected counters: %+v", d)
+	}
+	if strings.Join(d.Missing, ",") != "027901:e1(missing),027901:e0(timeout)" {
+		t.Fatalf("wrong failures: %v", d.Missing)
+	}
 }

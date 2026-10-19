@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ type ECHONETSource struct {
 	fullScan        bool
 	initialScanDone bool
 	fixedRead       map[string]bool
+	diagnostics     collectionDiagnostics
 }
 
 type ECHONETProperty struct {
@@ -30,8 +32,18 @@ func NewECHONETSource(addr string, fields map[string]ECHONETProperty, fullScan b
 	return &ECHONETSource{addr: net.JoinHostPort(addr, "3610"), fields: fields, tid: uint16(time.Now().UnixNano()), fullScan: fullScan}
 }
 
-func (s *ECHONETSource) Read(ctx context.Context) (Sample, error) {
+func (s *ECHONETSource) Read(ctx context.Context) (sample Sample, readErr error) {
 	now := time.Now()
+	s.diagnostics = collectionDiagnostics{}
+	defer func() {
+		outcome := "ok"
+		if readErr != nil {
+			outcome = "failed"
+		} else if s.diagnostics.Failed > 0 {
+			outcome = "partial"
+		}
+		log.Printf("echonet collect target=%s result=%s elapsed=%s requests=%d ok=%d failed=%d timeouts=%d properties=%d missing=%s", s.addr, outcome, time.Since(now).Round(time.Millisecond), s.diagnostics.Requests, s.diagnostics.OK, s.diagnostics.Failed, s.diagnostics.Timeouts, len(sample.Properties), strings.Join(s.diagnostics.Missing, ","))
+	}()
 	result := Sample{Time: now, Source: "echonet"}
 	useFullScan := s.fullScan || !s.initialScanDone
 	properties, err := s.readAllProperties(ctx, now, useFullScan)
@@ -56,7 +68,7 @@ func (s *ECHONETSource) readAllProperties(ctx context.Context, t time.Time, full
 
 	objects, err := s.readObjects(ctx, conn, udpAddr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("instance list target=%s EOJ=0ef001 EPC=d6: %w", s.addr, err)
 	}
 	props := []SampleProperty{}
 	for _, object := range objects {
@@ -180,7 +192,8 @@ func (s *ECHONETSource) readRawProperty(ctx context.Context, conn net.PacketConn
 	return data, nil
 }
 
-func (s *ECHONETSource) readRawProperties(ctx context.Context, conn net.PacketConn, addr *net.UDPAddr, eoj [3]byte, epcs []byte) (map[byte][]byte, error) {
+func (s *ECHONETSource) readRawProperties(ctx context.Context, conn net.PacketConn, addr *net.UDPAddr, eoj [3]byte, epcs []byte) (result map[byte][]byte, requestErr error) {
+	defer func() { s.diagnostics.record(eoj, epcs, result, requestErr) }()
 	deadline := time.Now().Add(1200 * time.Millisecond)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
@@ -462,4 +475,36 @@ func (s *ECHONETSource) pendingProperties(eoj [3]byte, candidates []byte) []byte
 		out = append(out, epc)
 	}
 	return out
+}
+
+// Counters include the instance-list and property-map requests as well as data reads.
+type collectionDiagnostics struct {
+	Requests, OK, Failed, Timeouts int
+	Missing                        []string
+}
+
+func (d *collectionDiagnostics) record(eoj [3]byte, epcs []byte, values map[byte][]byte, err error) {
+	d.Requests++
+	reason := "missing"
+	if err != nil {
+		reason = "error"
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			d.Timeouts++
+			reason = "timeout"
+		}
+	}
+	failed := err != nil
+	for _, epc := range epcs {
+		if err == nil && len(values[epc]) > 0 {
+			continue
+		}
+		failed = true
+		d.Missing = append(d.Missing, fmt.Sprintf("%s:%02x(%s)", formatEOJ(eoj), epc, reason))
+	}
+	if failed {
+		d.Failed++
+	} else {
+		d.OK++
+	}
 }

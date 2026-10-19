@@ -108,3 +108,15 @@ CNV機種: B002
 
 
 調査経緯と実測結果は [ECHONET Lite実測まとめ](echonet-findings.md) を参照してください。
+
+## 収集ログの読み方
+
+0.9.5以降は各収集の終了時に `echonet collect` を出力します。`result=ok` は全要求の値を取得、`partial` は一部欠測、`failed` は収集全体の失敗です。`elapsed` は所要時間、`requests` は要求数、`ok` / `failed` は要求の成功数・失敗数、`timeouts` はそのうちのタイムアウト数、`properties` は取得したデータ項目数です。要求数にはインスタンス一覧や属性一覧の取得も含みます。
+
+`missing` には `EOJ:EPC(timeout)` / `(missing)` / `(error)` の形で取得できなかった項目を記録します。`missing` は値のない応答も含み、未対応属性かどうかをこのログだけでは断定できません。ログのない期間を成功と判断せず、収集ごとの結果を確認してください。
+
+PowerShellで画面とファイルの両方にログを残す例:
+
+```powershell
+.\solar-monitor-0.9.5-windows-amd64.exe 2>&1 | Tee-Object -FilePath collect.log
+```
