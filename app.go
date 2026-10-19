@@ -85,6 +85,7 @@ func (a *App) handleSamples(w http.ResponseWriter, r *http.Request) {
 	limit := parseBoundedInt(r.URL.Query().Get("limit"), 288, 1, 5000)
 	samples, err := a.store.LatestSummaries(limit)
 	if err != nil {
+		log.Printf("read samples failed: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

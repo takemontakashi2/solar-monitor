@@ -66,6 +66,7 @@ func (s *Store) init() error {
 		);
 		CREATE INDEX IF NOT EXISTS properties_time_idx ON properties(time);
 		CREATE INDEX IF NOT EXISTS properties_key_idx ON properties(eoj, epc, time);
+		CREATE INDEX IF NOT EXISTS properties_sample_idx ON properties(sample_id, eoj, epc);
 	`)
 	if err != nil {
 		return err

@@ -120,6 +120,7 @@ const healthKeys = healthDevices.flatMap(device => healthEpcs.map(epc => device.
 const chartSampleLimit = 720;
 let selected = new Set(JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultSelected);
 let chartSamples = [];
+let samplesLoading = false;
 const propertyCache = new Map();
 let latestSampleTime = 0;
 let settingsOpen = localStorage.getItem(settingsOpenKey) === 'true';
@@ -149,19 +150,36 @@ async function refresh() {
     refreshAllProperties();
     refreshStats();
   }
-  const res = await fetch('/api/samples?limit=' + chartSampleLimit, {cache: 'no-store'});
-  const samples = await res.json();
-  const latest = samples[samples.length - 1];
-  if (!latest) return;
-  latestSampleTime = new Date(latest.time).getTime();
-  chartSamples = samples;
-  $('pv').textContent = fmtKW(latest.pv_watts);
-  $('load').textContent = fmtKW(latest.load_watts);
-  $('gridLabel').textContent = !has(latest.grid_watts) ? '買電 / 売電' : latest.grid_watts > 0 ? '買電' : latest.grid_watts < 0 ? '売電' : '買電 / 売電（0）';
-  $('grid').textContent = has(latest.grid_watts) ? fmtKW(Math.abs(latest.grid_watts)) : '--';
-  $('today').textContent = fmtKWh(latest.today_kwh);
-  $('updated').textContent = new Date(latest.time).toLocaleString();
-  draw(samples);
+  if (samplesLoading) return;
+  samplesLoading = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch('/api/samples?limit=' + chartSampleLimit, {cache: 'no-store', signal: controller.signal});
+    if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + await res.text());
+    const samples = await res.json();
+    const latest = samples[samples.length - 1];
+    if (!latest) {
+      $('updated').textContent = '記録がまだありません。機器からの取得待ちです。';
+      draw([]);
+      return;
+    }
+    latestSampleTime = new Date(latest.time).getTime();
+    chartSamples = samples;
+    $('pv').textContent = fmtKW(latest.pv_watts);
+    $('load').textContent = fmtKW(latest.load_watts);
+    $('gridLabel').textContent = !has(latest.grid_watts) ? '買電 / 売電' : latest.grid_watts > 0 ? '買電' : latest.grid_watts < 0 ? '売電' : '買電 / 売電（0）';
+    $('grid').textContent = has(latest.grid_watts) ? fmtKW(Math.abs(latest.grid_watts)) : '--';
+    $('today').textContent = fmtKWh(latest.today_kwh);
+    $('updated').textContent = new Date(latest.time).toLocaleString();
+    draw(samples);
+  } catch (error) {
+    $('updated').textContent = error.name === 'AbortError' ? '記録の読み出しが15秒以内に完了しませんでした。再試行します。' : '記録の読み出しに失敗: ' + error.message;
+    console.error('samples refresh failed', error);
+  } finally {
+    clearTimeout(timeout);
+    samplesLoading = false;
+  }
 }
 async function refreshSelectedProperties() {
   renderSelectedProperties([]);
