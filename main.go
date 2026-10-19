@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var version = "0.9.5"
+var version = "0.9.6"
 
 func versionInfo() string {
 	info := "solar-monitor " + version
@@ -45,7 +45,7 @@ func runServer(args []string) {
 	addr := fs.String("addr", ":8080", "HTTP listen address")
 	data := fs.String("data", "data/solar.db", "SQLite data file")
 	configPath := fs.String("config", "data/config.json", "config file")
-	interval := fs.Duration("interval", 60*time.Second, "collection interval")
+	interval := fs.Duration("interval", 60*time.Second, "pause between collections")
 	sourceKind := fs.String("source", "echonet", "source type: echonet, mock, or http-json")
 	sourceURL := fs.String("source-url", "", "HTTP JSON source URL")
 	echonetAddr := fs.String("echonet-addr", "", "ECHONET Lite target IPv4 address")

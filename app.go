@@ -24,16 +24,18 @@ func NewApp(store *Store, source Source) *App {
 }
 
 func (a *App) RunCollector(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	a.CollectOnce(ctx)
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		a.CollectOnce(ctx)
+		// Allow a full quiet interval even when collection exceeded the configured interval.
+		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
-			a.CollectOnce(ctx)
+		case <-timer.C:
 		}
 	}
 }

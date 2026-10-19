@@ -109,3 +109,44 @@ func TestCollectionDiagnostics(t *testing.T) {
 		t.Fatalf("wrong failures: %v", d.Missing)
 	}
 }
+
+func TestRequestMatchingRejectsDelayedAndOtherResponses(t *testing.T) {
+	eoj := [3]byte{2, 0x79, 1}
+	packet := []byte{0x10, 0x81, 0x12, 0x34, 2, 0x79, 1, 5, 0xff, 1, 0x72, 0}
+	if !matchesECHONETRequest(packet, 0x1234, eoj) {
+		t.Fatal("valid response rejected")
+	}
+	for _, index := range []int{0, 2, 3, 4, 7, 10} {
+		bad := append([]byte{}, packet...)
+		bad[index] ^= 1
+		if matchesECHONETRequest(bad, 0x1234, eoj) {
+			t.Fatalf("accepted mismatch at %d", index)
+		}
+	}
+	packet[10] = 0x52
+	if !matchesECHONETRequest(packet, 0x1234, eoj) {
+		t.Fatal("GET rejection must match request")
+	}
+}
+
+func TestNormalRequestsExcludeFailingControllerAttributes(t *testing.T) {
+	eoj := [3]byte{5, 0xff, 1}
+	normal := echonetReadCandidates(eoj, false)
+	for _, epc := range []byte{0x97, 0x98, 0x8c, 0xf1} {
+		if containsByte(normal, epc) {
+			t.Fatalf("unnecessary normal request: %x", epc)
+		}
+	}
+	full := echonetReadCandidates(eoj, true)
+	for _, epc := range []byte{0x97, 0x98, 0x8c, 0xf1} {
+		if !containsByte(full, epc) {
+			t.Fatalf("diagnostic missing: %x", epc)
+		}
+	}
+	prioritized := prioritizeMeasurements(eoj, normal)
+	for i, epc := range []byte{0xf2, 0xf3, 0xf4, 0xf5} {
+		if prioritized[i] != epc {
+			t.Fatalf("power not prioritized: %x", prioritized)
+		}
+	}
+}

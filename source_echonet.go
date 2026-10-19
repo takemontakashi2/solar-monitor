@@ -13,13 +13,13 @@ import (
 )
 
 type ECHONETSource struct {
-	addr            string
-	fields          map[string]ECHONETProperty
-	tid             uint16
-	fullScan        bool
-	initialScanDone bool
-	fixedRead       map[string]bool
-	diagnostics     collectionDiagnostics
+	addr        string
+	fields      map[string]ECHONETProperty
+	tid         uint16
+	fullScan    bool
+	nextRequest time.Time
+	fixedRead   map[string]bool
+	diagnostics collectionDiagnostics
 }
 
 type ECHONETProperty struct {
@@ -45,13 +45,12 @@ func (s *ECHONETSource) Read(ctx context.Context) (sample Sample, readErr error)
 		log.Printf("echonet collect target=%s result=%s elapsed=%s requests=%d ok=%d failed=%d timeouts=%d properties=%d missing=%s", s.addr, outcome, time.Since(now).Round(time.Millisecond), s.diagnostics.Requests, s.diagnostics.OK, s.diagnostics.Failed, s.diagnostics.Timeouts, len(sample.Properties), strings.Join(s.diagnostics.Missing, ","))
 	}()
 	result := Sample{Time: now, Source: "echonet"}
-	useFullScan := s.fullScan || !s.initialScanDone
+	useFullScan := s.fullScan
 	properties, err := s.readAllProperties(ctx, now, useFullScan)
 	if err != nil {
 		return Sample{}, err
 	}
 	result.Properties = properties
-	s.initialScanDone = true
 	deriveECHONETSummary(&result)
 	for _, prop := range properties {
 		s.applyKnownProperty(&result, prop)
@@ -81,6 +80,7 @@ func (s *ECHONETSource) readAllProperties(ctx context.Context, t time.Time, full
 			candidates = propertyMap
 		}
 		candidates = s.pendingProperties(object, candidates)
+		candidates = prioritizeMeasurements(object, candidates)
 		for _, batch := range propertyBatches(candidates, 1) {
 			values, err := s.readRawProperties(ctx, conn, udpAddr, object, batch)
 			if err != nil {
@@ -100,7 +100,10 @@ func (s *ECHONETSource) readAllProperties(ctx context.Context, t time.Time, full
 
 func echonetReadCandidates(eoj [3]byte, fullScan bool) []byte {
 	class := uint16(eoj[0])<<8 | uint16(eoj[1])
-	common := []byte{0x80, 0x81, 0x82, 0x83, 0x86, 0x88, 0x89, 0x8a, 0x8b, 0x8d, 0x97, 0x98}
+	common := []byte{0x80, 0x86, 0x88, 0x82, 0x83, 0x8a, 0x8b, 0x8d}
+	if fullScan {
+		common = append(common, 0x81, 0x89, 0x97, 0x98)
+	}
 	switch class {
 	case 0x0279:
 		normal := append([]byte{}, common...)
@@ -112,7 +115,7 @@ func echonetReadCandidates(eoj [3]byte, fullScan bool) []byte {
 		return uniqueBytes(full)
 	case 0x027d:
 		normal := append([]byte{}, common...)
-		normal = append(normal, 0xd3, 0xd6, 0xd8, 0xe3, 0xe4, 0xcf, 0xda, 0xdb, 0xeb, 0xec)
+		normal = append(normal, 0xd3, 0xd6, 0xd8, 0xe3, 0xe4, 0xcf, 0xda, 0xdb, 0xeb, 0xec, 0xc7, 0xd0, 0xd1, 0xd2)
 		if !fullScan {
 			return uniqueBytes(normal)
 		}
@@ -120,7 +123,10 @@ func echonetReadCandidates(eoj [3]byte, fullScan bool) []byte {
 		return uniqueBytes(full)
 	case 0x05ff:
 		normal := append([]byte{}, common...)
-		normal = append(normal, 0x8c, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5)
+		normal = append(normal, 0xf2, 0xf3, 0xf4, 0xf5)
+		if fullScan {
+			normal = append(normal, 0x8c, 0xf1)
+		}
 		return uniqueBytes(normal)
 	default:
 		return nil
@@ -194,7 +200,20 @@ func (s *ECHONETSource) readRawProperty(ctx context.Context, conn net.PacketConn
 
 func (s *ECHONETSource) readRawProperties(ctx context.Context, conn net.PacketConn, addr *net.UDPAddr, eoj [3]byte, epcs []byte) (result map[byte][]byte, requestErr error) {
 	defer func() { s.diagnostics.record(eoj, epcs, result, requestErr) }()
-	deadline := time.Now().Add(1200 * time.Millisecond)
+	if wait := time.Until(s.nextRequest); wait > 0 {
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.nextRequest = time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
 	}
@@ -216,9 +235,15 @@ func (s *ECHONETSource) readRawProperties(ctx context.Context, conn net.PacketCo
 	}
 	buf := make([]byte, 1500)
 	for {
-		n, _, err := conn.ReadFrom(buf)
+		n, sender, err := conn.ReadFrom(buf)
 		if err != nil {
 			return nil, err
+		}
+		if sender.String() != addr.String() || !matchesECHONETRequest(buf[:n], s.tid, eoj) {
+			continue
+		}
+		if buf[10] == 0x52 {
+			return nil, fmt.Errorf("GET rejected by %s EOJ=%s", s.addr, formatEOJ(eoj))
 		}
 		values, err := echonetPropertiesDataFor(buf[:n], eoj)
 		if err == nil {
@@ -507,4 +532,29 @@ func (d *collectionDiagnostics) record(eoj [3]byte, epcs []byte, values map[byte
 	} else {
 		d.OK++
 	}
+}
+
+func matchesECHONETRequest(packet []byte, tid uint16, eoj [3]byte) bool {
+	return len(packet) >= 12 && packet[0] == 0x10 && packet[1] == 0x81 && packet[2] == byte(tid>>8) && packet[3] == byte(tid) && packet[4] == eoj[0] && packet[5] == eoj[1] && packet[6] == eoj[2] && packet[7] == 0x05 && packet[8] == 0xff && packet[9] == 0x01 && (packet[10] == 0x72 || packet[10] == 0x52)
+}
+
+func prioritizeMeasurements(eoj [3]byte, candidates []byte) []byte {
+	var first []byte
+	switch uint16(eoj[0])<<8 | uint16(eoj[1]) {
+	case 0x0279:
+		first = []byte{0xe0, 0xe1}
+	case 0x027d:
+		first = []byte{0xd3, 0xe4, 0xe3, 0xcf}
+	case 0x05ff:
+		first = []byte{0xf2, 0xf3, 0xf4, 0xf5}
+	}
+	out := []byte{}
+	for _, key := range first {
+		for _, candidate := range candidates {
+			if key == candidate {
+				out = append(out, key)
+			}
+		}
+	}
+	return uniqueBytes(append(out, candidates...))
 }
