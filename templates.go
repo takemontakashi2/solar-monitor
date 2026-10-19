@@ -74,7 +74,7 @@ const indexHTML = `<!doctype html>
   <section class="grid">
     <div class="card"><div class="label">発電</div><div class="value"><span id="pv">--</span><span class="unit">kW</span></div></div>
     <div class="card"><div class="label">消費</div><div class="value"><span id="load">--</span><span class="unit">kW</span></div></div>
-    <div class="card"><div class="label">買電 / 売電</div><div class="value"><span id="grid">--</span><span class="unit">kW</span></div></div>
+    <div class="card"><div class="label" id="gridLabel">買電 / 売電</div><div class="value"><span id="grid">--</span><span class="unit">kW</span></div></div>
     <div class="card"><div class="label">今日の発電</div><div class="value"><span id="today">--</span><span class="unit">kWh</span></div></div>
   </section>
   <section class="prop-grid" id="selectedProps"></section>
@@ -82,7 +82,7 @@ const indexHTML = `<!doctype html>
     <div class="chart-legend" aria-label="グラフ凡例">
       <span class="legend-item"><span class="legend-line" style="background:#d19b1d"></span>発電</span>
       <span class="legend-item"><span class="legend-line" style="background:#2f6f73"></span>消費</span>
-      <span class="legend-item"><span class="legend-line" style="background:#8357a4"></span>買電 / 売電（絶対値）</span>
+      <span class="legend-item"><span class="legend-line" style="background:#8357a4"></span>買電（＋）/ 売電（−）</span>
     </div>
     <label class="label">グラフ表示 <select id="chartSmoothing"><option value="5">5分平均</option><option value="0">実測値</option></select></label>
     <canvas id="chart"></canvas>
@@ -157,6 +157,7 @@ async function refresh() {
   chartSamples = samples;
   $('pv').textContent = fmtKW(latest.pv_watts);
   $('load').textContent = fmtKW(latest.load_watts);
+  $('gridLabel').textContent = !has(latest.grid_watts) ? '買電 / 売電' : latest.grid_watts > 0 ? '買電' : latest.grid_watts < 0 ? '売電' : '買電 / 売電（0）';
   $('grid').textContent = has(latest.grid_watts) ? fmtKW(Math.abs(latest.grid_watts)) : '--';
   $('today').textContent = fmtKWh(latest.today_kwh);
   $('updated').textContent = new Date(latest.time).toLocaleString();
@@ -286,7 +287,7 @@ function smoothSamples(samples, minutes) {
         if (new Date(sample.time) - new Date(samples[j].time) >= minutes * 60000) break;
         if (!has(samples[j][key])) break;
         if (j < index && new Date(samples[j + 1].time) - new Date(samples[j].time) > minutes * 60000) break;
-        sum += key === 'grid_watts' ? Math.abs(samples[j][key]) : samples[j][key];
+        sum += samples[j][key];
         count++;
       }
       result[key] = sum / count;
@@ -310,25 +311,32 @@ function draw(samples) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, rect.width, rect.height);
   const pad = {left: 58, right: 18, top: 24, bottom: 44};
-  const values = samples.flatMap(s => [s.pv_watts, s.load_watts, has(s.grid_watts) ? Math.abs(s.grid_watts) : null]).filter(has);
+  const values = samples.flatMap(s => [s.pv_watts, s.load_watts, s.grid_watts]).filter(has);
   const max = Math.ceil(Math.max(1000, ...values) / 1000) * 1000;
-  drawPowerAxis(ctx, max, rect, pad);
+  const min = Math.floor(Math.min(0, ...values) / 1000) * 1000;
+  drawPowerAxis(ctx, min, max, rect, pad);
   drawTimeAxis(ctx, samples, rect, pad);
-  line(samples, 'pv_watts', '#d19b1d', max, rect, pad);
-  line(samples, 'load_watts', '#2f6f73', max, rect, pad);
-  line(samples, 'grid_watts', '#8357a4', max, rect, pad, true);
+  line(samples, 'pv_watts', '#d19b1d', min, max, rect, pad);
+  line(samples, 'load_watts', '#2f6f73', min, max, rect, pad);
+  line(samples, 'grid_watts', '#8357a4', min, max, rect, pad);
 }
-function drawPowerAxis(ctx, max, rect, pad) {
-  ctx.strokeStyle = '#d8ddd0';
+function powerY(value, min, max, rect, pad) {
+  return rect.height - pad.bottom - (rect.height - pad.top - pad.bottom) * (value - min) / (max - min);
+}
+function drawPowerAxis(ctx, min, max, rect, pad) {
   ctx.fillStyle = '#62675e';
   ctx.font = '12px system-ui, sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.top + (rect.height - pad.top - pad.bottom) * i / 4;
+  const step = Math.ceil((max - min) / 4000) * 1000;
+  const ticks = new Set([min, max, 0]);
+  for (let value = Math.ceil(min / step) * step; value <= max; value += step) ticks.add(value);
+  for (const value of [...ticks].sort((a, b) => a - b)) {
+    const y = powerY(value, min, max, rect, pad);
+    ctx.strokeStyle = value === 0 ? '#62675e' : '#d8ddd0';
+    ctx.lineWidth = value === 0 ? 2 : 1;
     ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(rect.width - pad.right, y); ctx.stroke();
-    ctx.fillText(String(max * (4 - i) / 4 / 1000), pad.left - 8, y);
+    ctx.fillText(String(value / 1000), pad.left - 8, y);
   }
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
@@ -352,7 +360,7 @@ function drawTimeAxis(ctx, samples, rect, pad) {
     ctx.fillText(label, x, y + 8);
   }
 }
-function line(samples, key, color, max, rect, pad, abs) {
+function line(samples, key, color, min, max, rect, pad) {
   if (samples.length < 2) return;
   const ctx = $('chart').getContext('2d');
   ctx.strokeStyle = color;
@@ -364,8 +372,7 @@ function line(samples, key, color, max, rect, pad, abs) {
     const raw = s[key];
     if (!has(raw)) { started = false; return; }
     if (i > 0 && new Date(s.time) - new Date(samples[i - 1].time) > 5 * 60000) started = false;
-    const val = abs ? Math.abs(raw) : raw;
-    const y = rect.height - pad.bottom - (rect.height - pad.top - pad.bottom) * val / max;
+    const y = powerY(raw, min, max, rect, pad);
     if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, y); }
   });
   ctx.stroke();
