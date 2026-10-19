@@ -86,6 +86,7 @@ const indexHTML = `<!doctype html>
     </div>
     <label class="label">グラフ表示 <select id="chartSmoothing"><option value="5">5分平均</option><option value="0">実測値</option></select></label>
     <canvas id="chart"></canvas>
+    <div class="label">欠測を挟む5分以内の区間は破線で接続します。5分平均は取得できた値から計算します。</div>
   </section>
   <section class="health-grid" id="healthGrid"></section>
   <section class="panel" id="settingsPanel" hidden>
@@ -118,6 +119,9 @@ const healthDevices = [
 const healthEpcs = ['80', '88', '86'];
 const healthKeys = healthDevices.flatMap(device => healthEpcs.map(epc => device.eoj + ':' + epc));
 const chartSampleLimit = 720;
+const smoothingKey = 'solar-monitor.chart-smoothing';
+const savedSmoothing = localStorage.getItem(smoothingKey);
+$('chartSmoothing').value = ['0', '5'].includes(savedSmoothing) ? savedSmoothing : '5';
 let selected = new Set(JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultSelected);
 let chartSamples = [];
 let samplesLoading = false;
@@ -303,7 +307,7 @@ function smoothSamples(samples, minutes) {
       let sum = 0, count = 0;
       for (let j = index; j >= 0; j--) {
         if (new Date(sample.time) - new Date(samples[j].time) >= minutes * 60000) break;
-        if (!has(samples[j][key])) break;
+        if (!has(samples[j][key])) continue;
         if (j < index && new Date(samples[j + 1].time) - new Date(samples[j].time) > minutes * 60000) break;
         sum += samples[j][key];
         count++;
@@ -330,9 +334,12 @@ function draw(samples) {
   ctx.clearRect(0, 0, rect.width, rect.height);
   const pad = {left: 58, right: 18, top: 24, bottom: 44};
   const values = samples.flatMap(s => [s.pv_watts, s.load_watts, s.grid_watts]).filter(has);
-  const max = Math.ceil(Math.max(1000, ...values) / 1000) * 1000;
-  const min = Math.floor(Math.min(0, ...values) / 1000) * 1000;
-  drawPowerAxis(ctx, min, max, rect, pad);
+  const lower = Math.min(0, ...values);
+  const upper = Math.max(1000, ...values);
+  const step = Math.ceil((upper - lower) / 4000) * 1000;
+  const min = Math.floor(lower / step) * step;
+  const max = Math.ceil(upper / step) * step;
+  drawPowerAxis(ctx, min, max, rect, pad, step);
   drawTimeAxis(ctx, samples, rect, pad);
   line(samples, 'pv_watts', '#d19b1d', min, max, rect, pad);
   line(samples, 'load_watts', '#2f6f73', min, max, rect, pad);
@@ -341,12 +348,11 @@ function draw(samples) {
 function powerY(value, min, max, rect, pad) {
   return rect.height - pad.bottom - (rect.height - pad.top - pad.bottom) * (value - min) / (max - min);
 }
-function drawPowerAxis(ctx, min, max, rect, pad) {
+function drawPowerAxis(ctx, min, max, rect, pad, step) {
   ctx.fillStyle = '#62675e';
   ctx.font = '12px system-ui, sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
-  const step = Math.ceil((max - min) / 4000) * 1000;
   const ticks = new Set([min, max, 0]);
   for (let value = Math.ceil(min / step) * step; value <= max; value += step) ticks.add(value);
   for (const value of [...ticks].sort((a, b) => a - b)) {
@@ -369,33 +375,53 @@ function drawTimeAxis(ctx, samples, rect, pad) {
   ctx.font = '12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  const ticks = Math.min(5, samples.length);
-  for (let i = 0; i < ticks; i++) {
-    const index = ticks === 1 ? 0 : Math.round((samples.length - 1) * i / (ticks - 1));
-    const x = sampleX(samples, index, rect, pad);
-    const label = new Date(samples[index].time).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  const start = new Date(samples[0].time).getTime();
+  const end = new Date(samples[samples.length - 1].time).getTime();
+  const span = end - start;
+  if (span <= 0) return;
+  const target = span / Math.max(2, Math.floor((rect.width - pad.left - pad.right) / 100));
+  const step = ([1, 2, 3, 6, 12, 24, 48, 168].find(hours => hours * 3600000 >= target) || 168) * 3600000;
+  const tick = new Date(start);
+  tick.setMinutes(0, 0, 0);
+  if (tick.getTime() < start) tick.setHours(tick.getHours() + 1);
+  for (let time = tick.getTime(); time <= end; time += step) {
+    const x = pad.left + (rect.width - pad.left - pad.right) * (time - start) / span;
+    const date = new Date(time);
+    const label = date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
     ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 5); ctx.stroke();
     ctx.fillText(label, x, y + 8);
+    if (date.getHours() === 0 || time === tick.getTime()) {
+      ctx.fillText((date.getMonth() + 1) + '/' + date.getDate(), x, y + 23);
+    }
   }
 }
 function line(samples, key, color, min, max, rect, pad) {
-  if (samples.length < 2) return;
   const ctx = $('chart').getContext('2d');
   ctx.strokeStyle = color;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  let started = false;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  let previous = null;
   samples.forEach((s, i) => {
-    const x = sampleX(samples, i, rect, pad);
     const raw = s[key];
-    if (!has(raw)) { started = false; return; }
-    if (i > 0 && new Date(s.time) - new Date(samples[i - 1].time) > 5 * 60000) started = false;
-    const y = powerY(raw, min, max, rect, pad);
-    if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, y); }
+    if (!has(raw)) return;
+    const point = {x: sampleX(samples, i, rect, pad), y: powerY(raw, min, max, rect, pad), time: new Date(s.time).getTime(), index: i};
+    if (previous && point.time - previous.time <= 5 * 60000) {
+      // A dashed segment explicitly marks interpolation over missing readings.
+      ctx.setLineDash(i - previous.index > 1 ? [4, 4] : []);
+      ctx.beginPath(); ctx.moveTo(previous.x, previous.y); ctx.lineTo(point.x, point.y); ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.arc(point.x, point.y, 1.5, 0, 2 * Math.PI); ctx.fill();
+    }
+    previous = point;
   });
-  ctx.stroke();
+  ctx.setLineDash([]);
 }
-$('chartSmoothing').addEventListener('change', () => draw(chartSamples));
+$('chartSmoothing').addEventListener('change', () => {
+  localStorage.setItem(smoothingKey, $('chartSmoothing').value);
+  draw(chartSamples);
+});
 window.addEventListener('resize', () => draw(chartSamples));
 $('settingsButton').addEventListener('click', () => {
   settingsOpen = !settingsOpen;
