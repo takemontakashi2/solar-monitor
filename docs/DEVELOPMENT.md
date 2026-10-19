@@ -62,3 +62,5 @@ git push --atomic origin main vX.Y.Z
 [リリースワークフロー](../.github/workflows/release.yml) がテスト・Windows x64版ビルドを実行し、exe・zip・SHA-256を添付したドラフトリリースを作成します。自動で実行されない場合はGitHub Actionsの「Prepare release」で「Run workflow」を選び、既存のタグを指定します。
 
 Actionsの成功、添付ファイル、Windowsでのバージョン表示と起動、リリースノートを確認してからGitHub上で公開します。公開済みタグの付け替えはせず、修正は次のバージョンで配布してください。
+
+0.9.0は公開承認済みのため、ワークフローが配布物をアップロードした後に自動公開します。他のタグはドラフト作成までです。

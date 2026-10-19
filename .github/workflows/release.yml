@@ -39,9 +39,10 @@ jobs:
           binary="solar-monitor-$version-windows-amd64.exe"
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o "dist/$binary" .
           cp README.md dist/README.md
+          cp -R docs dist/docs
           cp "docs/releases/$RELEASE_TAG.md" dist/RELEASE-NOTES.md
           cd dist
-          zip "solar-monitor-$version-windows-amd64.zip" "$binary" README.md RELEASE-NOTES.md
+          zip -r "solar-monitor-$version-windows-amd64.zip" "$binary" README.md RELEASE-NOTES.md docs
           sha256sum "$binary" *.zip > SHA256SUMS.txt
       - name: Create or update draft release
         env:
@@ -56,3 +57,8 @@ jobs:
             gh release create "$RELEASE_TAG" --verify-tag --draft --title "Solar Monitor $RELEASE_TAG" --notes-file "docs/releases/$RELEASE_TAG.md"
           fi
           gh release upload "$RELEASE_TAG" dist/*.exe dist/*.zip dist/SHA256SUMS.txt --clobber
+      - name: Publish approved 0.9.0 release
+        if: ${{ (inputs.tag || github.ref_name) == 'v0.9.0' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit v0.9.0 --draft=false --latest
