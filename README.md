@@ -191,6 +191,8 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o solar-monitor.exe .
 
 ## バージョンと表示
 
+Windows配布版は [GitHub Releases](https://github.com/takemontakashi2/solar-monitor/releases) から取得できます。リリース手順と0.2.0の変更点は [リリースノート](docs/releases/v0.2.0.md) を参照してください。`vX.Y.Z` タグをpushするとGitHub ActionsがテストとWindows版のビルドを行い、exe・zip・SHA-256を添付したドラフトリリースを作成します。確認後にGitHub上で公開します。
+
 `./solar-monitor -v` または `./solar-monitor --version` でバージョンとビルド元のコミットを確認できます。開発中の変更を含むビルドは `dirty` と表示します。
 
 グラフは標準で直近5分の移動平均を表示し、「実測値」で元の値に切り替えられます。買電/売電は絶対値を平均します。保存データや上部の現在値は平滑化しません。欠測は0にせず線を途切れさせ、5分を超える取得間隔も線で結びません。

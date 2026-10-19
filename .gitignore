@@ -5,6 +5,7 @@ data/
 # Built binaries
 solar-monitor
 solar-monitor.exe
+dist/
 
 # Temporary local attachments and inspection files
 photos/
