@@ -120,6 +120,7 @@ const healthKeys = healthDevices.flatMap(device => healthEpcs.map(epc => device.
 const chartSampleLimit = 720;
 let selected = new Set(JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultSelected);
 let chartSamples = [];
+const propertyCache = new Map();
 let latestSampleTime = 0;
 let settingsOpen = localStorage.getItem(settingsOpenKey) === 'true';
 const has = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -143,6 +144,11 @@ function displayValue(p) {
   return '--';
 }
 async function refresh() {
+  refreshSelectedProperties();
+  if (settingsOpen) {
+    refreshAllProperties();
+    refreshStats();
+  }
   const res = await fetch('/api/samples?limit=' + chartSampleLimit, {cache: 'no-store'});
   const samples = await res.json();
   const latest = samples[samples.length - 1];
@@ -154,14 +160,10 @@ async function refresh() {
   $('grid').textContent = has(latest.grid_watts) ? fmtKW(Math.abs(latest.grid_watts)) : '--';
   $('today').textContent = fmtKWh(latest.today_kwh);
   $('updated').textContent = new Date(latest.time).toLocaleString();
-  refreshSelectedProperties();
-  if (settingsOpen) {
-    refreshAllProperties();
-    refreshStats();
-  }
   draw(samples);
 }
 async function refreshSelectedProperties() {
+  renderSelectedProperties([]);
   const keysToFetch = [...new Set([...selected, ...healthKeys])];
   if (keysToFetch.length === 0) {
     renderSelectedProperties([]);
@@ -169,10 +171,15 @@ async function refreshSelectedProperties() {
     return;
   }
   const keys = encodeURIComponent(keysToFetch.join(','));
-  const res = await fetch('/api/properties?limit=1&keys=' + keys, {cache: 'no-store'});
-  const properties = await res.json();
-  renderSelectedProperties(properties || []);
-  renderHealth(properties || []);
+  try {
+    const res = await fetch('/api/properties?limit=1&keys=' + keys, {cache: 'no-store'});
+    if (!res.ok) throw new Error('properties: HTTP ' + res.status);
+    const properties = await res.json();
+    renderSelectedProperties(properties || []);
+    renderHealth(properties || []);
+  } catch (error) {
+    console.warn('項目の更新に失敗しました。カードは保持します。', error);
+  }
 }
 async function refreshAllProperties() {
   const res = await fetch('/api/properties?limit=1', {cache: 'no-store'});
@@ -185,9 +192,12 @@ async function refreshStats() {
   renderStats(stats || []);
 }
 function renderSelectedProperties(properties) {
-  const byKey = new Map(properties.map(p => [keyOf(p), p]));
+  properties.forEach(p => {
+    const previous = propertyCache.get(keyOf(p));
+    if (!previous || new Date(p.time) >= new Date(previous.time)) propertyCache.set(keyOf(p), p);
+  });
   $('selectedProps').innerHTML = [...selected].map(key => {
-    const p = byKey.get(key);
+    const p = propertyCache.get(key);
     const older = p && new Date(p.time).getTime() < latestSampleTime;
     const stale = p && Date.now() - new Date(p.time).getTime() > 5 * 60 * 1000;
     const note = p ? (stale ? '更新待ち・' : older ? '前回値・' : '') + new Date(p.time).toLocaleString() : '未取得';
@@ -240,6 +250,7 @@ function renderProperties(properties) {
     input.addEventListener('change', () => {
       if (input.checked) selected.add(input.dataset.key); else selected.delete(input.dataset.key);
       saveSelected();
+      renderSelectedProperties(properties);
       renderProperties(properties);
       refreshSelectedProperties();
     });
@@ -371,6 +382,7 @@ $('settingsButton').addEventListener('click', () => {
   }
 });
 applySettingsVisibility();
+renderSelectedProperties([]);
 refresh();
 setInterval(refresh, 30000);
 </script>
