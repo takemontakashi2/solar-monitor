@@ -35,7 +35,9 @@ const indexHTML = `<!doctype html>
     .error-bad { color: #bd2d2d; }
     .chart { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 12px; margin-bottom: 18px; }
     .chart-legend { display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 2px 6px 8px; color: #4f554c; font-size: 13px; }
-    .legend-item { display: inline-flex; align-items: center; gap: 7px; }
+    .legend-item { display: inline-flex; align-items: center; gap: 7px; font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 8px; cursor: pointer; }
+    .legend-item[aria-pressed="true"] { font-weight: 700; background: #eef2e8; border-color: #87977a; }
+    .legend-item:focus-visible { outline: 2px solid #2f6f73; outline-offset: 2px; }
     .legend-line { width: 24px; height: 3px; border-radius: 2px; }
     canvas { width: 100%; height: 360px; display: block; }
     .panel { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 16px; margin-bottom: 18px; }
@@ -80,9 +82,9 @@ const indexHTML = `<!doctype html>
   <section class="prop-grid" id="selectedProps"></section>
   <section class="chart">
     <div class="chart-legend" aria-label="グラフ凡例">
-      <span class="legend-item"><span class="legend-line" style="background:#d19b1d"></span>発電</span>
-      <span class="legend-item"><span class="legend-line" style="background:#2f6f73"></span>消費</span>
-      <span class="legend-item"><span class="legend-line" style="background:#8357a4"></span>買電（＋）/ 売電（−）</span>
+      <button type="button" class="legend-item" data-series="pv_watts" aria-pressed="false" title="クリックで強調、もう一度クリックで解除"><span class="legend-line" style="background:#d19b1d"></span>発電</button>
+      <button type="button" class="legend-item" data-series="load_watts" aria-pressed="false" title="クリックで強調、もう一度クリックで解除"><span class="legend-line" style="background:#2f6f73"></span>消費</button>
+      <button type="button" class="legend-item" data-series="grid_watts" aria-pressed="false" title="クリックで強調、もう一度クリックで解除"><span class="legend-line" style="background:#8357a4"></span>買電（＋）/ 売電（−）</button>
     </div>
     <label class="label">グラフ表示 <select id="chartSmoothing"><option value="5">5分平均</option><option value="0">実測値</option></select></label>
     <canvas id="chart"></canvas>
@@ -124,6 +126,7 @@ const savedSmoothing = localStorage.getItem(smoothingKey);
 $('chartSmoothing').value = ['0', '5'].includes(savedSmoothing) ? savedSmoothing : '5';
 let selected = new Set(JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultSelected);
 let chartSamples = [];
+let highlightedSeries = null;
 let samplesLoading = false;
 const propertyCache = new Map();
 let latestSampleTime = 0;
@@ -341,9 +344,9 @@ function draw(samples) {
   const max = Math.ceil(upper / step) * step;
   drawPowerAxis(ctx, min, max, rect, pad, step);
   drawTimeAxis(ctx, samples, rect, pad);
-  line(samples, 'pv_watts', '#d19b1d', min, max, rect, pad);
-  line(samples, 'load_watts', '#2f6f73', min, max, rect, pad);
-  line(samples, 'grid_watts', '#8357a4', min, max, rect, pad);
+  const series = [['pv_watts', '#d19b1d'], ['load_watts', '#2f6f73'], ['grid_watts', '#8357a4']];
+  series.sort((a, b) => Number(a[0] === highlightedSeries) - Number(b[0] === highlightedSeries));
+  series.forEach(([key, color]) => line(samples, key, color, min, max, rect, pad));
 }
 function powerY(value, min, max, rect, pad) {
   return rect.height - pad.bottom - (rect.height - pad.top - pad.bottom) * (value - min) / (max - min);
@@ -397,9 +400,11 @@ function drawTimeAxis(ctx, samples, rect, pad) {
 }
 function line(samples, key, color, min, max, rect, pad) {
   const ctx = $('chart').getContext('2d');
+  ctx.save();
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
-  ctx.lineWidth = 2;
+  ctx.globalAlpha = highlightedSeries && highlightedSeries !== key ? 0.25 : 1;
+  ctx.lineWidth = highlightedSeries === key ? 4 : 2;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   let previous = null;
@@ -412,12 +417,20 @@ function line(samples, key, color, min, max, rect, pad) {
       ctx.setLineDash(i - previous.index > 1 ? [4, 4] : []);
       ctx.beginPath(); ctx.moveTo(previous.x, previous.y); ctx.lineTo(point.x, point.y); ctx.stroke();
     } else {
-      ctx.beginPath(); ctx.arc(point.x, point.y, 1.5, 0, 2 * Math.PI); ctx.fill();
+      ctx.beginPath(); ctx.arc(point.x, point.y, highlightedSeries === key ? 3 : 1.5, 0, 2 * Math.PI); ctx.fill();
     }
     previous = point;
   });
   ctx.setLineDash([]);
+  ctx.restore();
 }
+document.querySelectorAll('[data-series]').forEach(button => {
+  button.addEventListener('click', () => {
+    highlightedSeries = highlightedSeries === button.dataset.series ? null : button.dataset.series;
+    document.querySelectorAll('[data-series]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.series === highlightedSeries)));
+    draw(chartSamples);
+  });
+});
 $('chartSmoothing').addEventListener('change', () => {
   localStorage.setItem(smoothingKey, $('chartSmoothing').value);
   draw(chartSamples);

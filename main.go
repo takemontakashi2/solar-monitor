@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var version = "0.9.7"
+var version = "0.9.8"
 
 func versionInfo() string {
 	info := "solar-monitor " + version
