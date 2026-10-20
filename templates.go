@@ -22,6 +22,9 @@ const indexHTML = `<!doctype html>
     .value { font-size: clamp(26px, 4vw, 42px); font-weight: 750; margin-top: 8px; line-height: 1.05; overflow-wrap: anywhere; }
     .unit { font-size: 16px; color: #62675e; margin-left: 4px; }
     .health-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .health-panel { margin-bottom: 18px; }
+    .health-panel summary { cursor: pointer; padding: 12px; border: 1px solid #dfe3d8; border-radius: 8px; background: #fff; }
+    .health-panel[open] summary { margin-bottom: 12px; }
     .health-card { background: #ffffff; border: 1px solid #dfe3d8; border-radius: 8px; padding: 14px; }
     .health-title { font-weight: 700; margin-bottom: 10px; }
     .health-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-top: 1px solid #edf0e8; padding: 8px 0; font-size: 14px; }
@@ -90,7 +93,10 @@ const indexHTML = `<!doctype html>
     <canvas id="chart"></canvas>
     <div class="label">欠測を挟む5分以内の区間は破線で接続します。5分平均は取得できた値から計算します。</div>
   </section>
-  <section class="health-grid" id="healthGrid"></section>
+  <details class="health-panel" id="healthPanel" open>
+    <summary id="healthSummary">機器の状態：確認中</summary>
+    <section class="health-grid" id="healthGrid"></section>
+  </details>
   <section class="panel" id="settingsPanel" hidden>
     <h2>表示する値</h2>
     <div class="chooser" id="propertyChooser"></div>
@@ -127,6 +133,7 @@ $('chartSmoothing').value = ['0', '5'].includes(savedSmoothing) ? savedSmoothing
 let selected = new Set(JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultSelected);
 let chartSamples = [];
 let highlightedSeries = null;
+let previousHealthState = null;
 let samplesLoading = false;
 const propertyCache = new Map();
 let latestSampleTime = 0;
@@ -204,6 +211,7 @@ async function refreshSelectedProperties() {
     renderSelectedProperties(properties || []);
     renderHealth(properties || []);
   } catch (error) {
+    renderHealth([...propertyCache.values()]);
     console.warn('項目の更新に失敗しました。カードは保持します。', error);
   }
 }
@@ -232,18 +240,33 @@ function renderSelectedProperties(properties) {
 }
 function renderHealth(properties) {
   const byKey = new Map(properties.map(p => [keyOf(p), p]));
-  $('healthGrid').innerHTML = healthDevices.map(device => {
+  const states = healthDevices.map(device => {
+    const status = byKey.get(device.eoj + ':80');
+    const error = byKey.get(device.eoj + ':88');
+    if (hasError(error)) return 'error';
+    const fresh = p => p && Number.isFinite(new Date(p.time).getTime()) && Date.now() - new Date(p.time).getTime() <= 5 * 60000;
+    if (!fresh(status) || !fresh(error) || !['30', '31'].includes(status.raw) || error.raw !== '42') return 'unknown';
+    return 'normal';
+  });
+  const state = states.includes('error') ? 'error' : states.includes('unknown') ? 'unknown' : 'normal';
+  const affected = healthDevices.filter((_, i) => states[i] !== 'normal').map(device => device.name).join('・');
+  $('healthSummary').textContent = state === 'normal' ? '機器の状態：異常なし（クリックで詳細）' : state === 'error' ? '機器の状態：異常あり — ' + affected : '機器の状態：未取得・更新待ち — ' + affected;
+  $('healthSummary').classList.toggle('error-bad', state === 'error');
+  if (state !== previousHealthState || state !== 'normal') $('healthPanel').open = state !== 'normal';
+  previousHealthState = state;
+  $('healthGrid').innerHTML = healthDevices.map((device, index) => {
     const status = byKey.get(device.eoj + ':80');
     const errorState = byKey.get(device.eoj + ':88');
     const errorCode = byKey.get(device.eoj + ':86');
     return '<div class="health-card"><div class="health-title">' + escapeHTML(device.name) + '</div>' +
+      (states[index] === 'unknown' ? '<div class="label">未取得または5分以上更新されていません</div>' : '') +
       '<div class="health-row"><span>動作状態</span><span class="health-value">' + statusHTML(status) + '</span></div>' +
       '<div class="health-row"><span>エラー</span><span class="health-value ' + escapeHTML(errorClass(errorState)) + '">' + escapeHTML(errorDisplay(errorState, errorCode)) + '</span></div>' +
       '<div class="health-row"><span>異常コード</span><span class="health-value">' + escapeHTML(errorCodeDisplay(errorState, errorCode)) + '</span></div></div>';
   }).join('');
 }
 function statusHTML(prop) {
-  const value = (prop && (prop.description || '')).toUpperCase();
+  const value = ((prop && prop.description) || '').toUpperCase();
   if (value === 'ON') return '<span class="state-icon state-on">○</span>';
   if (value === 'OFF') return '<span class="state-icon state-off">×</span>';
   return '<span class="state-icon state-unknown">--</span>';
@@ -447,6 +470,7 @@ $('settingsButton').addEventListener('click', () => {
 });
 applySettingsVisibility();
 renderSelectedProperties([]);
+renderHealth([]);
 refresh();
 setInterval(refresh, 30000);
 </script>
