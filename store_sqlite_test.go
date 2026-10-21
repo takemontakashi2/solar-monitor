@@ -326,3 +326,36 @@ func TestRejectedFixedPersistenceAndReset(t *testing.T) {
 		t.Fatalf("reset failed: %v %v", a, err)
 	}
 }
+
+func TestBatteryHistoryKeepsMissingAndRange(t *testing.T) {
+	s, err := NewStore(filepath.Join(t.TempDir(), "battery.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	values := []*float64{floatPtr(0), floatPtr(73), nil, floatPtr(100), floatPtr(255)}
+	for i, v := range values {
+		sample := Sample{Time: time.Date(2026, 10, 21, 0, i, 0, 0, time.UTC), Source: "echonet"}
+		if v != nil {
+			sample.Properties = []SampleProperty{{EOJ: "027d01", EPC: "e4", Float: v}}
+		}
+		if err := s.Append(sample); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, read := range []func(int) ([]Sample, error){s.LatestSummaries, s.Latest} {
+		got, err := read(5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, p := range got {
+			if i == 2 || i == 4 {
+				if p.BatteryPercent != nil {
+					t.Fatalf("missing/invalid converted to value at %d", i)
+				}
+			} else if p.BatteryPercent == nil || *p.BatteryPercent != *values[i] {
+				t.Fatalf("bad battery at %d: %v", i, p.BatteryPercent)
+			}
+		}
+	}
+}

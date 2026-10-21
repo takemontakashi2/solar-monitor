@@ -170,7 +170,8 @@ func (s *Store) LatestSummaries(limit int) ([]Sample, error) {
 
 func (s *Store) latest(limit int, includeProperties bool) ([]Sample, error) {
 	rows, err := s.db.Query(`
-		SELECT id, time, pv_watts, load_watts, grid_watts, today_kwh, source, valid_fields
+		SELECT id, time, pv_watts, load_watts, grid_watts, today_kwh, source, valid_fields,
+        (SELECT float_value FROM properties p WHERE p.sample_id=samples.id AND p.eoj='027d01' AND p.epc='e4' ORDER BY p.id DESC LIMIT 1)
 		FROM samples
 		ORDER BY time DESC, id DESC
 		LIMIT ?
@@ -189,9 +190,13 @@ func (s *Store) latest(limit int, includeProperties bool) ([]Sample, error) {
 		var rawTime string
 		var pv, load, grid, today float64
 		var valid int
-		err := rows.Scan(&id, &rawTime, &pv, &load, &grid, &today, &sample.Source, &valid)
+		var battery sql.NullFloat64
+		err := rows.Scan(&id, &rawTime, &pv, &load, &grid, &today, &sample.Source, &valid, &battery)
 		if err != nil {
 			return nil, err
+		}
+		if battery.Valid && battery.Float64 >= 0 && battery.Float64 <= 100 {
+			sample.BatteryPercent = floatPtr(battery.Float64)
 		}
 		sample.Time, err = time.Parse(time.RFC3339Nano, rawTime)
 		if valid >= 0 {

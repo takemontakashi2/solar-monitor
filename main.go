@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var version = "0.9.9"
+var version = "0.9.10"
 
 func versionInfo() string {
 	info := "solar-monitor " + version
@@ -39,6 +39,7 @@ func main() {
 
 func runServer(args []string) {
 	fs := flag.NewFlagSet("solar-monitor", flag.ExitOnError)
+	debugLogging := fs.Bool("debug", false, "show detailed collection diagnostics")
 	var showVersion bool
 	fs.BoolVar(&showVersion, "v", false, "show version and exit")
 	fs.BoolVar(&showVersion, "version", false, "show version and exit")
@@ -77,6 +78,7 @@ func runServer(args []string) {
 	}
 
 	if echonet, ok := source.(*ECHONETSource); ok {
+		echonet.debug = *debugLogging
 		echonet.rejectedFixed, err = store.RejectedFixed(echonet.addr)
 		if err != nil {
 			log.Fatal(err)

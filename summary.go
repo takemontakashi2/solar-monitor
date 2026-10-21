@@ -1,6 +1,7 @@
 package main
 
 func deriveECHONETSummary(sample *Sample) {
+	sample.BatteryPercent = nil
 	sample.PVWatts = nil
 	sample.LoadWatts = nil
 	sample.GridWatts = nil
@@ -15,6 +16,10 @@ func deriveECHONETSummary(sample *Sample) {
 			pvWatts = floatPtr(*prop.Float)
 		case "027901:e1":
 			sample.TodayKWh = floatPtr(*prop.Float * 0.001)
+		case "027d01:e4":
+			if *prop.Float >= 0 && *prop.Float <= 100 {
+				sample.BatteryPercent = floatPtr(*prop.Float)
+			}
 		case "027d01:d3":
 			batteryWatts = floatPtr(*prop.Float)
 		case "05ff01:f2":

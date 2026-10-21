@@ -13,6 +13,7 @@ import (
 )
 
 type ECHONETSource struct {
+	debug         bool
 	addr          string
 	fields        map[string]ECHONETProperty
 	tid           uint16
@@ -37,6 +38,9 @@ func (s *ECHONETSource) Read(ctx context.Context) (sample Sample, readErr error)
 	now := time.Now()
 	s.diagnostics = collectionDiagnostics{}
 	defer func() {
+		if !s.debug {
+			return
+		}
 		outcome := "ok"
 		if readErr != nil {
 			outcome = "failed"

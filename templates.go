@@ -88,6 +88,7 @@ const indexHTML = `<!doctype html>
       <button type="button" class="legend-item" data-series="pv_watts" aria-pressed="false" title="クリックで強調、もう一度クリックで解除"><span class="legend-line" style="background:#d19b1d"></span>発電</button>
       <button type="button" class="legend-item" data-series="load_watts" aria-pressed="false" title="クリックで強調、もう一度クリックで解除"><span class="legend-line" style="background:#2f6f73"></span>消費</button>
       <button type="button" class="legend-item" data-series="grid_watts" aria-pressed="false" title="クリックで強調、もう一度クリックで解除"><span class="legend-line" style="background:#8357a4"></span>買電（＋）/ 売電（−）</button>
+      <button type="button" class="legend-item" data-series="battery_percent" aria-pressed="false" title="クリックで強調、もう一度クリックで解除"><span class="legend-line" style="background:#2776c5"></span>電池残量（右軸 %）</button>
     </div>
     <label class="label">グラフ表示 <select id="chartSmoothing"><option value="5">5分平均</option><option value="0">実測値</option></select></label>
     <canvas id="chart"></canvas>
@@ -358,7 +359,7 @@ function draw(samples) {
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, rect.width, rect.height);
-  const pad = {left: 58, right: 18, top: 24, bottom: 44};
+  const pad = {left: 58, right: 58, top: 24, bottom: 44};
   const values = samples.flatMap(s => [s.pv_watts, s.load_watts, s.grid_watts]).filter(has);
   const lower = Math.min(0, ...values);
   const upper = Math.max(1000, ...values);
@@ -366,10 +367,11 @@ function draw(samples) {
   const min = Math.floor(lower / step) * step;
   const max = Math.ceil(upper / step) * step;
   drawPowerAxis(ctx, min, max, rect, pad, step);
+  drawBatteryAxis(ctx, rect, pad);
   drawTimeAxis(ctx, samples, rect, pad);
-  const series = [['pv_watts', '#d19b1d'], ['load_watts', '#2f6f73'], ['grid_watts', '#8357a4']];
+  const series = [['pv_watts', '#d19b1d'], ['load_watts', '#2f6f73'], ['grid_watts', '#8357a4'], ['battery_percent', '#2776c5']];
   series.sort((a, b) => Number(a[0] === highlightedSeries) - Number(b[0] === highlightedSeries));
-  series.forEach(([key, color]) => line(samples, key, color, min, max, rect, pad));
+  series.forEach(([key, color]) => line(samples, key, color, key === 'battery_percent' ? 0 : min, key === 'battery_percent' ? 100 : max, rect, pad));
 }
 function powerY(value, min, max, rect, pad) {
   return rect.height - pad.bottom - (rect.height - pad.top - pad.bottom) * (value - min) / (max - min);
@@ -391,6 +393,23 @@ function drawPowerAxis(ctx, min, max, rect, pad, step) {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillText('kW', 6, 2);
+}
+function drawBatteryAxis(ctx, rect, pad) {
+  const x = rect.width - pad.right;
+  ctx.fillStyle = '#2776c5';
+  ctx.strokeStyle = '#2776c5';
+  ctx.lineWidth = 1;
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, rect.height - pad.bottom); ctx.stroke();
+  for (let value = 0; value <= 100; value += 20) {
+    const y = powerY(value, 0, 100, rect, pad);
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 5, y); ctx.stroke();
+    ctx.fillText(String(value), x + 8, y);
+  }
+  ctx.textBaseline = 'top';
+  ctx.fillText('%', x + 8, 2);
 }
 function drawTimeAxis(ctx, samples, rect, pad) {
   if (samples.length === 0) return;
