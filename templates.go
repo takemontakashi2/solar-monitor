@@ -367,11 +367,11 @@ function draw(samples) {
   const min = Math.floor(lower / step) * step;
   const max = Math.ceil(upper / step) * step;
   drawPowerAxis(ctx, min, max, rect, pad, step);
-  drawBatteryAxis(ctx, rect, pad);
+  drawBatteryAxis(ctx, min, max, rect, pad);
   drawTimeAxis(ctx, samples, rect, pad);
   const series = [['pv_watts', '#d19b1d'], ['load_watts', '#2f6f73'], ['grid_watts', '#8357a4'], ['battery_percent', '#2776c5']];
   series.sort((a, b) => Number(a[0] === highlightedSeries) - Number(b[0] === highlightedSeries));
-  series.forEach(([key, color]) => line(samples, key, color, key === 'battery_percent' ? 0 : min, key === 'battery_percent' ? 100 : max, rect, pad));
+  series.forEach(([key, color]) => line(samples, key, color, key === 'battery_percent' ? 100 * min / max : min, key === 'battery_percent' ? 100 : max, rect, pad));
 }
 function powerY(value, min, max, rect, pad) {
   return rect.height - pad.bottom - (rect.height - pad.top - pad.bottom) * (value - min) / (max - min);
@@ -394,7 +394,7 @@ function drawPowerAxis(ctx, min, max, rect, pad, step) {
   ctx.textBaseline = 'top';
   ctx.fillText('kW', 6, 2);
 }
-function drawBatteryAxis(ctx, rect, pad) {
+function drawBatteryAxis(ctx, min, max, rect, pad) {
   const x = rect.width - pad.right;
   ctx.fillStyle = '#2776c5';
   ctx.strokeStyle = '#2776c5';
@@ -402,9 +402,9 @@ function drawBatteryAxis(ctx, rect, pad) {
   ctx.font = '12px system-ui, sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, rect.height - pad.bottom); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, powerY(0, min, max, rect, pad)); ctx.stroke();
   for (let value = 0; value <= 100; value += 20) {
-    const y = powerY(value, 0, 100, rect, pad);
+    const y = powerY(value, 100 * min / max, 100, rect, pad);
     ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 5, y); ctx.stroke();
     ctx.fillText(String(value), x + 8, y);
   }
