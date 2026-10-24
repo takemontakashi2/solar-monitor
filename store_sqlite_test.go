@@ -359,3 +359,33 @@ func TestBatteryHistoryKeepsMissingAndRange(t *testing.T) {
 		}
 	}
 }
+
+func TestSummariesBetweenUsesInstantsAndExclusiveEnd(t *testing.T) {
+	s, err := NewStore(filepath.Join(t.TempDir(), "history.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	timestamps := []string{"2026-10-23T23:59:59+09:00", "2026-10-23T15:00:00Z", "2026-10-24T12:00:00+09:00", "2026-10-25T00:00:00+09:00"}
+	for i, raw := range timestamps {
+		at, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Append(Sample{Time: at, Source: "test", PVWatts: floatPtr(float64(i))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start, _ := time.Parse(time.RFC3339, "2026-10-24T00:00:00+09:00")
+	got, err := s.SummariesBetween(start, start.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || *got[0].PVWatts != 1 || *got[1].PVWatts != 2 {
+		t.Fatalf("wrong range: %+v", got)
+	}
+	empty, err := s.SummariesBetween(start.Add(72*time.Hour), start.Add(96*time.Hour))
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty date: %v %v", empty, err)
+	}
+}

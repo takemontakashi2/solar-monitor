@@ -90,6 +90,15 @@ const indexHTML = `<!doctype html>
       <button type="button" class="legend-item" data-series="grid_watts" aria-pressed="false" title="クリックで強調、もう一度クリックで解除"><span class="legend-line" style="background:#8357a4"></span>買電（＋）/ 売電（−）</button>
       <button type="button" class="legend-item" data-series="battery_percent" aria-pressed="false" title="クリックで強調、もう一度クリックで解除"><span class="legend-line" style="background:#2776c5"></span>電池残量（右軸 %）</button>
     </div>
+    <div class="chart-legend">
+      <button type="button" id="previousDay">← 前日</button>
+      <input type="date" id="chartDate" aria-label="表示する日付">
+      <button type="button" id="nextDay">翌日 →</button>
+      <button type="button" id="todayButton">今日</button>
+      <label><input type="checkbox" id="compareDay">前日のデータを点線で重ねる</label>
+    </div>
+    <div class="label" id="chartStatus" role="status"></div>
+    <div class="label">上部のカードは最新の取得値、グラフは選択した日付を表示します。</div>
     <label class="label">グラフ表示 <select id="chartSmoothing"><option value="5">5分平均</option><option value="0">実測値</option></select></label>
     <canvas id="chart"></canvas>
     <div class="label">欠測を挟む5分以内の区間は破線で接続します。5分平均は取得できた値から計算します。</div>
@@ -127,12 +136,63 @@ const healthDevices = [
 ];
 const healthEpcs = ['80', '88', '86'];
 const healthKeys = healthDevices.flatMap(device => healthEpcs.map(epc => device.eoj + ':' + epc));
-const chartSampleLimit = 720;
 const smoothingKey = 'solar-monitor.chart-smoothing';
 const savedSmoothing = localStorage.getItem(smoothingKey);
 $('chartSmoothing').value = ['0', '5'].includes(savedSmoothing) ? savedSmoothing : '5';
 let selected = new Set(JSON.parse(localStorage.getItem(storageKey) || 'null') || defaultSelected);
 let chartSamples = [];
+let comparisonSamples = [];
+let chartStart = 0, chartEnd = 1;
+let historyRequest = 0;
+let historyController = null;
+function localDate(date) {
+  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+}
+$('chartDate').value = localDate(new Date());
+async function refreshChart() {
+  const day = $('chartDate').value;
+  if (!day) return;
+  const start = new Date(day + 'T00:00:00');
+  const end = new Date(start); end.setDate(end.getDate() + 1);
+  const previous = new Date(start); previous.setDate(previous.getDate() - 1);
+  const compare = $('compareDay').checked;
+  const request = ++historyRequest;
+  if (historyController) historyController.abort();
+  const controller = new AbortController(); historyController = controller;
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  chartStart = start.getTime(); chartEnd = end.getTime();
+  chartSamples = []; comparisonSamples = []; draw([]);
+  $('chartStatus').textContent = day + ' 読み込み中…';
+  async function fetchRange(from, to) {
+    const query = new URLSearchParams({from: from.toISOString(), to: to.toISOString()});
+    const res = await fetch('/api/samples?' + query, {cache:'no-store',signal:controller.signal});
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+  try {
+    const [current, past] = await Promise.all([fetchRange(start,end),compare ? fetchRange(previous,start) : Promise.resolve([])]);
+    if (request !== historyRequest) return;
+    chartSamples = current;
+    comparisonSamples = past.map(sample => {
+      const date = new Date(sample.time); date.setDate(date.getDate() + 1);
+      return {...sample,time:date.toISOString()};
+    });
+    $('chartStatus').textContent = day + '：' + (current.length ? current.length + '件' : '記録なし') + (compare ? ' ／ 比較 ' + localDate(previous) + '：' + (past.length ? past.length + '件（点線）' : '記録なし') : '');
+    draw(chartSamples);
+  } catch(error) {
+    if (request === historyRequest) $('chartStatus').textContent = day + ' の読み出しに失敗しました。' + (error.name === 'AbortError' ? '時間をおいて再試行してください。' : error.message);
+  } finally { clearTimeout(timeout); }
+}
+function shiftChartDay(offset) {
+  const date = new Date($('chartDate').value + 'T00:00:00');
+  date.setDate(date.getDate() + offset);
+  $('chartDate').value = localDate(date); refreshChart();
+}
+$('previousDay').addEventListener('click', () => shiftChartDay(-1));
+$('nextDay').addEventListener('click', () => shiftChartDay(1));
+$('todayButton').addEventListener('click', () => { $('chartDate').value = localDate(new Date()); refreshChart(); });
+$('chartDate').addEventListener('change', refreshChart);
+$('compareDay').addEventListener('change', refreshChart);
 let highlightedSeries = null;
 let previousHealthState = null;
 let samplesLoading = false;
@@ -160,6 +220,7 @@ function displayValue(p) {
   return '--';
 }
 async function refresh() {
+  refreshChart();
   refreshSelectedProperties();
   if (settingsOpen) {
     refreshAllProperties();
@@ -170,24 +231,21 @@ async function refresh() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const res = await fetch('/api/samples?limit=' + chartSampleLimit, {cache: 'no-store', signal: controller.signal});
+    const res = await fetch('/api/samples?limit=1', {cache: 'no-store', signal: controller.signal});
     if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + await res.text());
     const samples = await res.json();
     const latest = samples[samples.length - 1];
     if (!latest) {
       $('updated').textContent = '記録がまだありません。機器からの取得待ちです。';
-      draw([]);
       return;
     }
     latestSampleTime = new Date(latest.time).getTime();
-    chartSamples = samples;
     $('pv').textContent = fmtKW(latest.pv_watts);
     $('load').textContent = fmtKW(latest.load_watts);
     $('gridLabel').textContent = !has(latest.grid_watts) ? '買電 / 売電' : latest.grid_watts > 0 ? '買電' : latest.grid_watts < 0 ? '売電' : '買電 / 売電（0）';
     $('grid').textContent = has(latest.grid_watts) ? fmtKW(Math.abs(latest.grid_watts)) : '--';
     $('today').textContent = fmtKWh(latest.today_kwh);
     $('updated').textContent = new Date(latest.time).toLocaleString();
-    draw(samples);
   } catch (error) {
     $('updated').textContent = error.name === 'AbortError' ? '記録の読み出しが15秒以内に完了しませんでした。再試行します。' : '記録の読み出しに失敗: ' + error.message;
     console.error('samples refresh failed', error);
@@ -345,12 +403,13 @@ function smoothSamples(samples, minutes) {
   });
 }
 function sampleX(samples, index, rect, pad) {
-  const start = new Date(samples[0].time).getTime();
-  const span = new Date(samples[samples.length - 1].time).getTime() - start;
+  const start = chartStart;
+  const span = chartEnd - chartStart;
   return pad.left + (rect.width - pad.left - pad.right) * (span > 0 ? (new Date(samples[index].time).getTime() - start) / span : 0);
 }
 function draw(samples) {
   samples = smoothSamples(samples, Number($('chartSmoothing').value));
+  const comparison = smoothSamples(comparisonSamples, Number($('chartSmoothing').value));
   const canvas = $('chart');
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -360,7 +419,7 @@ function draw(samples) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, rect.width, rect.height);
   const pad = {left: 58, right: 58, top: 24, bottom: 44};
-  const values = samples.flatMap(s => [s.pv_watts, s.load_watts, s.grid_watts]).filter(has);
+  const values = samples.concat(comparison).flatMap(s => [s.pv_watts, s.load_watts, s.grid_watts]).filter(has);
   const lower = Math.min(0, ...values);
   const upper = Math.max(1000, ...values);
   const step = Math.ceil((upper - lower) / 4000) * 1000;
@@ -371,6 +430,7 @@ function draw(samples) {
   drawTimeAxis(ctx, samples, rect, pad);
   const series = [['pv_watts', '#d19b1d'], ['load_watts', '#2f6f73'], ['grid_watts', '#8357a4'], ['battery_percent', '#2776c5']];
   series.sort((a, b) => Number(a[0] === highlightedSeries) - Number(b[0] === highlightedSeries));
+  series.forEach(([key, color]) => line(comparison, key, color, key === 'battery_percent' ? 100 * min / max : min, key === 'battery_percent' ? 100 : max, rect, pad, true));
   series.forEach(([key, color]) => line(samples, key, color, key === 'battery_percent' ? 100 * min / max : min, key === 'battery_percent' ? 100 : max, rect, pad));
 }
 function powerY(value, min, max, rect, pad) {
@@ -412,7 +472,6 @@ function drawBatteryAxis(ctx, min, max, rect, pad) {
   ctx.fillText('%', x + 8, 2);
 }
 function drawTimeAxis(ctx, samples, rect, pad) {
-  if (samples.length === 0) return;
   const y = rect.height - pad.bottom;
   ctx.fillStyle = '#62675e';
   ctx.strokeStyle = '#d8ddd0';
@@ -420,8 +479,8 @@ function drawTimeAxis(ctx, samples, rect, pad) {
   ctx.font = '12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  const start = new Date(samples[0].time).getTime();
-  const end = new Date(samples[samples.length - 1].time).getTime();
+  const start = chartStart;
+  const end = chartEnd;
   const span = end - start;
   if (span <= 0) return;
   const target = span / Math.max(2, Math.floor((rect.width - pad.left - pad.right) / 100));
@@ -440,12 +499,13 @@ function drawTimeAxis(ctx, samples, rect, pad) {
     }
   }
 }
-function line(samples, key, color, min, max, rect, pad) {
+function line(samples, key, color, min, max, rect, pad, comparison = false) {
   const ctx = $('chart').getContext('2d');
   ctx.save();
+  ctx.beginPath(); ctx.rect(pad.left, pad.top - 3, rect.width - pad.left - pad.right, rect.height - pad.top - pad.bottom + 6); ctx.clip();
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
-  ctx.globalAlpha = highlightedSeries && highlightedSeries !== key ? 0.25 : 1;
+  ctx.globalAlpha = highlightedSeries && highlightedSeries !== key ? 0.25 : comparison ? 0.65 : 1;
   ctx.lineWidth = highlightedSeries === key ? 4 : 2;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
@@ -456,7 +516,7 @@ function line(samples, key, color, min, max, rect, pad) {
     const point = {x: sampleX(samples, i, rect, pad), y: powerY(raw, min, max, rect, pad), time: new Date(s.time).getTime(), index: i};
     if (previous && point.time - previous.time <= 5 * 60000) {
       // A dashed segment explicitly marks interpolation over missing readings.
-      ctx.setLineDash(i - previous.index > 1 ? [4, 4] : []);
+      ctx.setLineDash(comparison ? [1, 5] : i - previous.index > 1 ? [4, 4] : []);
       ctx.beginPath(); ctx.moveTo(previous.x, previous.y); ctx.lineTo(point.x, point.y); ctx.stroke();
     } else {
       ctx.beginPath(); ctx.arc(point.x, point.y, highlightedSeries === key ? 3 : 1.5, 0, 2 * Math.PI); ctx.fill();

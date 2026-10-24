@@ -119,3 +119,24 @@ func TestParseBoundedInt(t *testing.T) {
 		}
 	}
 }
+
+func TestSamplesRangeValidation(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "range.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	app := NewApp(store, staticSource{})
+	for _, query := range []string{"from=bad&to=bad", "from=2026-10-24T00:00:00Z", "from=2026-10-25T00:00:00Z&to=2026-10-24T00:00:00Z", "from=2026-10-24T00:00:00Z&to=2026-10-27T00:00:00Z"} {
+		r := httptest.NewRecorder()
+		app.Routes().ServeHTTP(r, httptest.NewRequest("GET", "/api/samples?"+query, nil))
+		if r.Code != 400 {
+			t.Fatalf("%s: %d", query, r.Code)
+		}
+	}
+	r := httptest.NewRecorder()
+	app.Routes().ServeHTTP(r, httptest.NewRequest("GET", "/api/samples?from=2026-10-24T00:00:00Z&to=2026-10-25T00:00:00Z", nil))
+	if r.Code != 200 || r.Body.String() != "[]\n" {
+		t.Fatalf("empty day: %d %s", r.Code, r.Body.String())
+	}
+}

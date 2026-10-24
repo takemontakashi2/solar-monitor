@@ -102,7 +102,19 @@ func (a *App) handleLatest(w http.ResponseWriter, _ *http.Request) {
 
 func (a *App) handleSamples(w http.ResponseWriter, r *http.Request) {
 	limit := parseBoundedInt(r.URL.Query().Get("limit"), 288, 1, 5000)
-	samples, err := a.store.LatestSummaries(limit)
+	var samples []Sample
+	var err error
+	if r.URL.Query().Has("from") || r.URL.Query().Has("to") {
+		start, e1 := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
+		end, e2 := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
+		if e1 != nil || e2 != nil || !end.After(start) || end.Sub(start) > 48*time.Hour {
+			http.Error(w, "from/to must be RFC3339 timestamps spanning at most 48 hours", http.StatusBadRequest)
+			return
+		}
+		samples, err = a.store.SummariesBetween(start, end)
+	} else {
+		samples, err = a.store.LatestSummaries(limit)
+	}
 	if err != nil {
 		log.Printf("read samples failed: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

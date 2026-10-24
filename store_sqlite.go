@@ -55,6 +55,7 @@ func (s *Store) init() error {
 			source TEXT NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS samples_time_idx ON samples(time);
+ CREATE INDEX IF NOT EXISTS samples_instant_idx ON samples(julianday(time));
 		CREATE TABLE IF NOT EXISTS properties (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			sample_id INTEGER NOT NULL,
@@ -169,13 +170,22 @@ func (s *Store) LatestSummaries(limit int) ([]Sample, error) {
 }
 
 func (s *Store) latest(limit int, includeProperties bool) ([]Sample, error) {
+	return s.readSamples(limit, includeProperties, "", nil)
+}
+
+func (s *Store) SummariesBetween(start, end time.Time) ([]Sample, error) {
+	return s.readSamples(-1, false, " WHERE julianday(time) >= julianday(?) AND julianday(time) < julianday(?) ", []any{start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)})
+}
+
+func (s *Store) readSamples(limit int, includeProperties bool, filter string, args []any) ([]Sample, error) {
+	args = append(args, limit)
 	rows, err := s.db.Query(`
 		SELECT id, time, pv_watts, load_watts, grid_watts, today_kwh, source, valid_fields,
         (SELECT float_value FROM properties p WHERE p.sample_id=samples.id AND p.eoj='027d01' AND p.epc='e4' ORDER BY p.id DESC LIMIT 1)
-		FROM samples
-		ORDER BY time DESC, id DESC
+		FROM samples`+filter+`
+		ORDER BY julianday(time) DESC, id DESC
 		LIMIT ?
-	`, limit)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +193,7 @@ func (s *Store) latest(limit int, includeProperties bool) ([]Sample, error) {
 
 	ids := []int64{}
 	legacy := map[int64]bool{}
-	out := make([]Sample, 0, limit)
+	out := []Sample{}
 	for rows.Next() {
 		var sample Sample
 		var id int64
