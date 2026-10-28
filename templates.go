@@ -91,9 +91,9 @@ const indexHTML = `<!doctype html>
       <button type="button" class="legend-item" data-series="battery_percent" aria-pressed="false" title="クリックで強調、もう一度クリックで解除"><span class="legend-line" style="background:#2776c5"></span>電池残量（右軸 %）</button>
     </div>
     <div class="chart-legend">
-      <button type="button" id="previousDay">← 前日</button>
+      <button type="button" id="previousDay" hidden>← 前日</button>
       <input type="date" id="chartDate" aria-label="表示する日付">
-      <button type="button" id="nextDay">翌日 →</button>
+      <button type="button" id="nextDay" hidden>翌日 →</button>
       <button type="button" id="todayButton">今日</button>
       <label><input type="checkbox" id="compareDay">前日のデータを点線で重ねる</label>
     </div>
@@ -155,7 +155,9 @@ async function refreshChart() {
   const start = new Date(day + 'T00:00:00');
   const end = new Date(start); end.setDate(end.getDate() + 1);
   const previous = new Date(start); previous.setDate(previous.getDate() - 1);
+  const following = new Date(end); following.setDate(following.getDate() + 1);
   const compare = $('compareDay').checked;
+  $('previousDay').hidden = true; $('nextDay').hidden = true;
   const request = ++historyRequest;
   if (historyController) historyController.abort();
   const controller = new AbortController(); historyController = controller;
@@ -163,15 +165,21 @@ async function refreshChart() {
   chartStart = start.getTime(); chartEnd = end.getTime();
   chartSamples = []; comparisonSamples = []; draw([]);
   $('chartStatus').textContent = day + ' 読み込み中…';
-  async function fetchRange(from, to) {
+  async function fetchRange(from, to, exists = false) {
     const query = new URLSearchParams({from: from.toISOString(), to: to.toISOString()});
+    if (exists) query.set('exists', '1');
     const res = await fetch('/api/samples?' + query, {cache:'no-store',signal:controller.signal});
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return res.json();
   }
   try {
-    const [current, past] = await Promise.all([fetchRange(start,end),compare ? fetchRange(previous,start) : Promise.resolve([])]);
+    const [current, past, previousAvailable, nextAvailable] = await Promise.all([
+      fetchRange(start,end), compare ? fetchRange(previous,start) : Promise.resolve([]),
+      fetchRange(previous,start,true), fetchRange(end,following,true)
+    ]);
     if (request !== historyRequest) return;
+    $('previousDay').hidden = !previousAvailable.exists;
+    $('nextDay').hidden = !nextAvailable.exists;
     chartSamples = current;
     comparisonSamples = past.map(sample => {
       const date = new Date(sample.time); date.setDate(date.getDate() + 1);

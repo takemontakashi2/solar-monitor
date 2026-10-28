@@ -29,6 +29,8 @@ type Source interface {
 go test ./...
 go build -o solar-monitor .
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o solar-monitor.exe .
+GOOS=linux GOARCH=arm GOARM=6 CGO_ENABLED=0 go build -o solar-monitor-linux-armv6 .
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o solar-monitor-linux-arm64 .
 ```
 
 
@@ -59,8 +61,14 @@ git tag -a vX.Y.Z -m "Solar Monitor X.Y.Z"
 git push --atomic origin main vX.Y.Z
 ```
 
-[リリースワークフロー](../.github/workflows/release.yml) がテスト・Windows x64版ビルドを実行し、exe・zip・SHA-256を添付したドラフトリリースを作成します。自動で実行されない場合はGitHub Actionsの「Prepare release」で「Run workflow」を選び、既存のタグを指定します。
+[リリースワークフロー](../.github/workflows/release.yml) がテスト・Windows x64版とLinux ARMv6 / ARM64版のビルドを実行し、exe・Linux実行ファイル・zip・tar.gz・SHA-256を添付したドラフトリリースを作成します。自動で実行されない場合はGitHub Actionsの「Prepare release」で「Run workflow」を選び、既存のタグを指定します。
 
 Actionsの成功、添付ファイル、Windowsでのバージョン表示と起動、リリースノートを確認してからGitHub上で公開します。公開済みタグの付け替えはせず、修正は次のバージョンで配布してください。
 
 0.9.9は公開承認済みのため、ワークフローが配布物をアップロードした後に自動公開します。他のタグはドラフト作成までです。
+
+## 保存のバッファリング
+
+`-flush-interval` が正の場合、Storeは未保存のサンプルを保持し、読み出し時にDBの記録と統合します。flush時はサンプルとプロパティを1つのトランザクションにまとめ、成功した分だけバッファから除去します。固定項目の状態はサンプルのコミット後に保存します。API読み出しとflushをロックで同期し、重複表示や保存切り替え時の欠落を防ぎます。
+
+保存タイマーは収集処理と独立しています。通常停止では収集とタイマーの終了を待ち、最後のflushを実行します。バッファ上限・保存失敗・再試行・日付境界・未保存データのAPI表示は `buffer_test.go` で確認します。

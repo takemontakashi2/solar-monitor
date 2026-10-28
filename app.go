@@ -46,9 +46,20 @@ func (a *App) CollectOnce(ctx context.Context) {
 		log.Printf("collect failed: %v", err)
 		return
 	}
-	if err := a.store.Append(sample); err != nil {
-		log.Printf("store failed: %v", err)
-		return
+	for {
+		if err := a.store.Append(sample); err == nil {
+			break
+		} else {
+			log.Printf("store failed; collection paused until retry: %v", err)
+		}
+		timer := time.NewTimer(30 * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			log.Print("could not queue last sample before shutdown")
+			return
+		case <-timer.C:
+		}
 	}
 	if source, ok := a.source.(*ECHONETSource); ok {
 		if err := a.store.SaveRejectedFixed(source.addr, source.rejectedFixed); err != nil {
@@ -109,6 +120,15 @@ func (a *App) handleSamples(w http.ResponseWriter, r *http.Request) {
 		end, e2 := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
 		if e1 != nil || e2 != nil || !end.After(start) || end.Sub(start) > 48*time.Hour {
 			http.Error(w, "from/to must be RFC3339 timestamps spanning at most 48 hours", http.StatusBadRequest)
+			return
+		}
+		if r.URL.Query().Get("exists") == "1" {
+			found, err := a.store.HasSamplesBetween(start, end)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]bool{"exists": found})
 			return
 		}
 		samples, err = a.store.SummariesBetween(start, end)

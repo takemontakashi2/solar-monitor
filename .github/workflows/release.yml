@@ -13,7 +13,7 @@ concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 jobs:
-  windows:
+  package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,12 +38,22 @@ jobs:
           mkdir -p dist
           binary="solar-monitor-$version-windows-amd64.exe"
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o "dist/$binary" .
+          for arch in armv6 arm64; do
+            if [ "$arch" = armv6 ]; then
+              GOOS=linux GOARCH=arm GOARM=6 CGO_ENABLED=0 go build -o "dist/solar-monitor-$version-linux-$arch" .
+            else
+              GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "dist/solar-monitor-$version-linux-$arch" .
+            fi
+          done
           cp README.md dist/README.md
           cp -R docs dist/docs
           cp "docs/releases/$RELEASE_TAG.md" dist/RELEASE-NOTES.md
           cd dist
           zip -r "solar-monitor-$version-windows-amd64.zip" "$binary" README.md RELEASE-NOTES.md docs
-          sha256sum "$binary" *.zip > SHA256SUMS.txt
+          for arch in armv6 arm64; do
+            tar -czf "solar-monitor-$version-linux-$arch.tar.gz" "solar-monitor-$version-linux-$arch" README.md RELEASE-NOTES.md docs
+          done
+          sha256sum "$binary" solar-monitor-*-linux-armv6 solar-monitor-*-linux-arm64 *.zip *.tar.gz > SHA256SUMS.txt
       - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,7 +66,7 @@ jobs:
           else
             gh release create "$RELEASE_TAG" --verify-tag --draft --title "Solar Monitor $RELEASE_TAG" --notes-file "docs/releases/$RELEASE_TAG.md"
           fi
-          gh release upload "$RELEASE_TAG" dist/*.exe dist/*.zip dist/SHA256SUMS.txt --clobber
+          gh release upload "$RELEASE_TAG" dist/*.exe dist/*.zip dist/*-linux-armv6 dist/*-linux-arm64 dist/*.tar.gz dist/SHA256SUMS.txt --clobber
       - name: Publish approved 0.9.9 release
         if: ${{ (inputs.tag || github.ref_name) == 'v0.9.9' }}
         env:

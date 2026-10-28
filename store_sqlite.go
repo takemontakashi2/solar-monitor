@@ -2,17 +2,27 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 type Store struct {
-	db *sql.DB
+	db              *sql.DB
+	mu              sync.RWMutex
+	buffered        bool
+	pending         []Sample
+	pendingBytes    int
+	maxPendingBytes int
+	fixedPending    map[string][]SampleProperty
+	rejectedPending map[string]map[string]bool
 }
 
 func NewStore(path string) (*Store, error) {
@@ -105,12 +115,51 @@ func (s *Store) init() error {
 }
 
 func (s *Store) Append(sample Sample) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.buffered {
+		return s.appendBatch([]Sample{sample})
+	}
+	// Own the queued data so callers cannot mutate it after collection.
+	raw, err := json.Marshal(sample)
+	if err != nil {
+		return err
+	}
+	if s.pendingBytes+len(raw) > s.maxPendingBytes {
+		if err := s.flushLocked(); err != nil {
+			return fmt.Errorf("buffer full; flush failed: %w", err)
+		}
+	}
+	if len(raw) > s.maxPendingBytes {
+		return fmt.Errorf("sample exceeds buffer capacity")
+	}
+	var owned Sample
+	if err := json.Unmarshal(raw, &owned); err != nil {
+		return err
+	}
+	s.pending = append(s.pending, owned)
+	s.pendingBytes += len(raw)
+	return nil
+}
+
+func (s *Store) appendBatch(samples []Sample) error {
+	if len(samples) == 0 {
+		return nil
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	for _, sample := range samples {
+		if err := insertSample(tx, sample); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
 
+func insertSample(tx *sql.Tx, sample Sample) error {
 	res, err := tx.Exec(`
 		INSERT INTO samples (time, pv_watts, load_watts, grid_watts, today_kwh, source, valid_fields)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -158,7 +207,42 @@ func (s *Store) Append(sample Sample) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
+}
+
+// EnableBuffering must be called before starting collectors or HTTP handlers.
+func (s *Store) EnableBuffering() {
+	s.buffered = true
+	s.maxPendingBytes = 16 * 1024 * 1024
+	s.fixedPending = map[string][]SampleProperty{}
+	s.rejectedPending = map[string]map[string]bool{}
+}
+
+func (s *Store) Flush() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.flushLocked()
+}
+
+func (s *Store) flushLocked() error {
+	if err := s.appendBatch(s.pending); err != nil {
+		return err
+	}
+	s.pending = nil
+	s.pendingBytes = 0
+	for target, props := range s.fixedPending {
+		if err := s.recordFixedReads(target, props); err != nil {
+			return err
+		}
+		delete(s.fixedPending, target)
+	}
+	for target, rejected := range s.rejectedPending {
+		if err := s.saveRejectedFixed(target, rejected); err != nil {
+			return err
+		}
+		delete(s.rejectedPending, target)
+	}
+	return nil
 }
 
 func (s *Store) Latest(limit int) ([]Sample, error) {
@@ -178,6 +262,37 @@ func (s *Store) SummariesBetween(start, end time.Time) ([]Sample, error) {
 }
 
 func (s *Store) readSamples(limit int, includeProperties bool, filter string, args []any) ([]Sample, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.readCombined(limit, includeProperties, filter, args)
+}
+
+func (s *Store) readCombined(limit int, includeProperties bool, filter string, args []any) ([]Sample, error) {
+	out, err := s.readDiskSamples(limit, includeProperties, filter, args)
+	if err != nil {
+		return nil, err
+	}
+	for _, sample := range s.pending {
+		if filter != "" {
+			start, _ := time.Parse(time.RFC3339Nano, args[0].(string))
+			end, _ := time.Parse(time.RFC3339Nano, args[1].(string))
+			if sample.Time.Before(start) || !sample.Time.Before(end) {
+				continue
+			}
+		}
+		if !includeProperties {
+			sample.Properties = nil
+		}
+		out = append(out, sample)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
+	if limit >= 0 && len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out, nil
+}
+
+func (s *Store) readDiskSamples(limit int, includeProperties bool, filter string, args []any) ([]Sample, error) {
 	args = append(args, limit)
 	rows, err := s.db.Query(`
 		SELECT id, time, pv_watts, load_watts, grid_watts, today_kwh, source, valid_fields,
@@ -289,6 +404,66 @@ func (s *Store) propertiesForSample(sampleID int64) ([]SampleProperty, error) {
 }
 
 func (s *Store) LatestProperties(limit int, keys map[string]struct{}) ([]SampleProperty, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.pending) == 0 {
+		return s.diskProperties(limit, keys)
+	}
+	props := []SampleProperty{}
+	if limit == 1 {
+		saved, err := s.latestPropertyValues(keys)
+		if err != nil {
+			return nil, err
+		}
+		byKey := map[string]SampleProperty{}
+		for _, p := range saved {
+			byKey[p.EOJ+":"+p.EPC] = p
+		}
+		for _, sample := range s.pending {
+			for _, p := range sampleProperties(sample, keys) {
+				key := p.EOJ + ":" + p.EPC
+				if old, ok := byKey[key]; !ok || !p.Time.Before(old.Time) {
+					byKey[key] = p
+				}
+			}
+		}
+		for _, p := range byKey {
+			props = append(props, p)
+		}
+	} else {
+		samples, err := s.readCombined(limit, true, "", nil)
+		if err != nil {
+			return nil, err
+		}
+		for _, sample := range samples {
+			props = append(props, sampleProperties(sample, keys)...)
+		}
+	}
+	sort.SliceStable(props, func(i, j int) bool {
+		if limit != 1 && !props[i].Time.Equal(props[j].Time) {
+			return props[i].Time.Before(props[j].Time)
+		}
+		return props[i].EOJ+props[i].EPC < props[j].EOJ+props[j].EPC
+	})
+	return props, nil
+}
+
+func sampleProperties(sample Sample, keys map[string]struct{}) []SampleProperty {
+	out := []SampleProperty{}
+	for _, p := range sample.Properties {
+		if _, ok := keys[p.EOJ+":"+p.EPC]; len(keys) > 0 && !ok {
+			continue
+		}
+		if p.Time.IsZero() {
+			p.Time = sample.Time
+		}
+		p.Fixed = isFixedProperty(p.EOJ, p.EPC)
+		out = append(out, p)
+	}
+	return out
+}
+
+func (s *Store) diskProperties(limit int, keys map[string]struct{}) ([]SampleProperty, error) {
 	if limit == 1 {
 		return s.latestPropertyValues(keys)
 	}
@@ -392,6 +567,20 @@ func scanProperties(rows *sql.Rows) ([]SampleProperty, error) {
 }
 
 func (s *Store) PropertyStats(limit int) ([]PropertyStat, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.pending) > 0 {
+		samples, err := s.readCombined(limit, true, "", nil)
+		if err != nil {
+			return nil, err
+		}
+		props := []SampleProperty{}
+		for _, sample := range samples {
+			props = append(props, sampleProperties(sample, nil)...)
+		}
+		return propertyStats(props), nil
+	}
+
 	rows, err := s.db.Query(`
 		WITH latest_samples AS (
 			SELECT id
@@ -409,18 +598,33 @@ func (s *Store) PropertyStats(limit int) ([]PropertyStat, error) {
 	}
 	defer rows.Close()
 
-	byKey := map[string]*PropertyStat{}
+	props := []SampleProperty{}
 	for rows.Next() {
 		var rawTime string
-		var eoj, epc, name, raw, description string
+		var p SampleProperty
 		var value sql.NullFloat64
-		if err := rows.Scan(&rawTime, &eoj, &epc, &name, &raw, &value, &description); err != nil {
+		if err := rows.Scan(&rawTime, &p.EOJ, &p.EPC, &p.Name, &p.Raw, &value, &p.Description); err != nil {
 			return nil, err
 		}
-		t, err := time.Parse(time.RFC3339Nano, rawTime)
+		p.Time, err = time.Parse(time.RFC3339Nano, rawTime)
 		if err != nil {
 			return nil, err
 		}
+		if value.Valid {
+			p.Float = floatPtr(value.Float64)
+		}
+		props = append(props, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return propertyStats(props), nil
+}
+
+func propertyStats(props []SampleProperty) []PropertyStat {
+	byKey := map[string]*PropertyStat{}
+	for _, p := range props {
+		eoj, epc, name, raw, description, t := p.EOJ, p.EPC, p.Name, p.Raw, p.Description, p.Time
 		key := eoj + ":" + epc
 		stat, ok := byKey[key]
 		if !ok {
@@ -440,10 +644,10 @@ func (s *Store) PropertyStats(limit int) ([]PropertyStat, error) {
 		stat.LatestTime = t
 		stat.LatestRaw = raw
 		stat.LatestDescription = description
-		if !value.Valid {
+		if p.Float == nil {
 			continue
 		}
-		v := value.Float64
+		v := *p.Float
 		if stat.First == nil {
 			stat.First = floatPtr(v)
 		}
@@ -461,9 +665,6 @@ func (s *Store) PropertyStats(limit int) ([]PropertyStat, error) {
 			stat.Range = floatPtr(*stat.Max - *stat.Min)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
 	stats := make([]PropertyStat, 0, len(byKey))
 	for _, stat := range byKey {
 		stats = append(stats, *stat)
@@ -479,7 +680,7 @@ func (s *Store) PropertyStats(limit int) ([]PropertyStat, error) {
 		}
 		return stats[i].EPC < stats[j].EPC
 	})
-	return stats, nil
+	return stats
 }
 
 func nullUint64(v *uint64) any {
@@ -535,6 +736,35 @@ func (s *Store) FixedReads(target string) (map[string]bool, error) {
 }
 
 func (s *Store) RecordFixedReads(target string, props []SampleProperty) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fixed := []SampleProperty{}
+	for _, p := range props {
+		if isFixedProperty(p.EOJ, p.EPC) && p.Raw != "" {
+			fixed = append(fixed, p)
+		}
+	}
+	if len(fixed) == 0 {
+		return nil
+	}
+	if s.buffered {
+		byKey := map[string]SampleProperty{}
+		for _, p := range s.fixedPending[target] {
+			byKey[p.EOJ+":"+p.EPC] = p
+		}
+		for _, p := range fixed {
+			byKey[p.EOJ+":"+p.EPC] = p
+		}
+		merged := make([]SampleProperty, 0, len(byKey))
+		for _, p := range byKey {
+			merged = append(merged, p)
+		}
+		s.fixedPending[target] = merged
+		return nil
+	}
+	return s.recordFixedReads(target, fixed)
+}
+func (s *Store) recordFixedReads(target string, props []SampleProperty) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -568,6 +798,40 @@ func (s *Store) RejectedFixed(target string) (map[string]bool, error) {
 	return out, rows.Err()
 }
 func (s *Store) SaveRejectedFixed(target string, rejected map[string]bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.buffered {
+		snapshot := map[string]bool{}
+		for key, active := range rejected {
+			if active {
+				snapshot[key] = true
+			}
+		}
+		s.rejectedPending[target] = snapshot
+		return nil
+	}
+	return s.saveRejectedFixed(target, rejected)
+}
+func (s *Store) saveRejectedFixed(target string, rejected map[string]bool) error {
+	existing, err := s.RejectedFixed(target)
+	if err != nil {
+		return err
+	}
+	same := true
+	for key := range existing {
+		if !rejected[key] {
+			same = false
+		}
+	}
+	for key, active := range rejected {
+		if active && !existing[key] {
+			same = false
+		}
+	}
+	if same {
+		return nil
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -585,4 +849,18 @@ func (s *Store) SaveRejectedFixed(target string, rejected map[string]bool) error
 		}
 	}
 	return tx.Commit()
+}
+
+// HasSamplesBetween includes unsaved readings and stops at the first stored match.
+func (s *Store) HasSamplesBetween(start, end time.Time) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, sample := range s.pending {
+		if !sample.Time.Before(start) && sample.Time.Before(end) {
+			return true, nil
+		}
+	}
+	var found bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM samples WHERE julianday(time)>=julianday(?) AND julianday(time)<julianday(?))`, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)).Scan(&found)
+	return found, err
 }

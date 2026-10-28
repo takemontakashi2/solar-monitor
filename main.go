@@ -8,11 +8,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime/debug"
+	"strings"
+	"syscall"
 	"time"
 )
 
-var version = "0.9.12"
+var version = "0.9.13"
 
 func versionInfo() string {
 	info := "solar-monitor " + version
@@ -34,10 +37,12 @@ func main() {
 		runScan(os.Args[2:])
 		return
 	}
-	runServer(os.Args[1:])
+	if err := runServer(os.Args[1:]); err != nil {
+		log.Fatal(err)
+	}
 }
 
-func runServer(args []string) {
+func runServer(args []string) error {
 	fs := flag.NewFlagSet("solar-monitor", flag.ExitOnError)
 	debugLogging := fs.Bool("debug", false, "show detailed collection diagnostics")
 	var showVersion bool
@@ -46,6 +51,7 @@ func runServer(args []string) {
 	addr := fs.String("addr", ":8080", "HTTP listen address")
 	data := fs.String("data", "data/solar.db", "SQLite data file")
 	configPath := fs.String("config", "data/config.json", "config file")
+	flushInterval := fs.Duration("flush-interval", 0, "batch database writes at this interval (0 saves each collection)")
 	interval := fs.Duration("interval", 60*time.Second, "pause between collections")
 	sourceKind := fs.String("source", "echonet", "source type: echonet, mock, or http-json")
 	sourceURL := fs.String("source-url", "", "HTTP JSON source URL")
@@ -55,17 +61,20 @@ func runServer(args []string) {
 	_ = fs.Parse(args)
 	if showVersion {
 		fmt.Println(versionInfo())
-		return
+		return nil
 	}
 
+	if *flushInterval < 0 || *interval <= 0 {
+		return errors.New("flush-interval must be non-negative and interval must be positive")
+	}
 	cfg, err := LoadConfig(*configPath)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	store, err := NewStore(*data)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer store.Close()
 
@@ -74,27 +83,77 @@ func runServer(args []string) {
 		return SaveConfig(*configPath, updated)
 	})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	if echonet, ok := source.(*ECHONETSource); ok {
 		echonet.debug = *debugLogging
 		echonet.rejectedFixed, err = store.RejectedFixed(echonet.addr)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		echonet.fixedRead, err = store.FixedReads(echonet.addr)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 	}
+	if *flushInterval > 0 {
+		store.EnableBuffering()
+	}
 	app := NewApp(store, source)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	collectorDone := make(chan struct{})
+	go func() { defer close(collectorDone); app.RunCollector(ctx, *interval) }()
+	flusherDone := make(chan struct{})
+	go func() {
+		defer close(flusherDone)
+		if *flushInterval == 0 {
+			return
+		}
+		ticker := time.NewTicker(*flushInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := store.Flush(); err != nil {
+					log.Printf("flush failed; retaining unsaved data: %v", err)
+				}
+			}
+		}
+	}()
+	server := &http.Server{Addr: *addr, Handler: app.Routes(), ReadHeaderTimeout: 10 * time.Second}
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- server.ListenAndServe() }()
+	listenAddress := *addr
+	if strings.HasPrefix(listenAddress, ":") {
+		listenAddress = "localhost" + listenAddress
+	}
+	log.Printf("listening on http://%s", listenAddress)
+	var serverErr error
+	select {
+	case <-ctx.Done():
+	case err := <-serverDone:
+		if !errors.Is(err, http.ErrServerClosed) {
+			serverErr = fmt.Errorf("HTTP server failed: %w", err)
+		}
+		stop()
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	go app.RunCollector(ctx, *interval)
-
-	log.Printf("listening on http://localhost%s", *addr)
-	log.Fatal(http.ListenAndServe(*addr, app.Routes()))
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("HTTP shutdown failed: %v", err)
+	}
+	<-collectorDone
+	<-flusherDone
+	if err := store.Flush(); err != nil {
+		return fmt.Errorf("final save failed; unsaved data will be lost: %w", err)
+	} else if *flushInterval > 0 {
+		log.Print("remaining data saved")
+	}
+	return serverErr
 }
 
 func runScan(args []string) {
