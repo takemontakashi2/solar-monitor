@@ -71,6 +71,11 @@ if [ ! -e /usr/local/etc/solar-monitor/config.json ]; then
     chown solar-monitor:solar-monitor /usr/local/etc/solar-monitor/config.json
     chmod 0640 /usr/local/etc/solar-monitor/config.json
 fi
+# Preserve user settings and migrate old flags rather than silently dropping them.
+if ! /usr/sbin/sysrc -n solar_monitor_option >/dev/null 2>&1; then
+    old_flags=$(/usr/sbin/sysrc -n solar_monitor_flags 2>/dev/null || :)
+    /usr/sbin/sysrc "solar_monitor_option=$old_flags"
+fi
 ''',
             'pre-deinstall': '''#!/bin/sh
 # Stop via the supervisor so the child can flush before package files are removed.
