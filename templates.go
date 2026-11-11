@@ -22,6 +22,7 @@ const indexHTML = `<!doctype html>
     .value { font-size: clamp(26px, 4vw, 42px); font-weight: 750; margin-top: 8px; line-height: 1.05; overflow-wrap: anywhere; }
     .unit { font-size: 16px; color: #62675e; margin-left: 4px; }
     .health-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .health-normal { color: #168a45; padding: 12px; margin-bottom: 18px; }
     .health-panel { margin-bottom: 18px; }
     .health-panel summary { cursor: pointer; padding: 12px; border: 1px solid #dfe3d8; border-radius: 8px; background: #fff; }
     .health-panel[open] summary { margin-bottom: 12px; }
@@ -103,7 +104,8 @@ const indexHTML = `<!doctype html>
     <canvas id="chart"></canvas>
     <div class="label">欠測を挟む5分以内の区間は破線で接続します。5分平均は取得できた値から計算します。</div>
   </section>
-  <details class="health-panel" id="healthPanel" open>
+  <div class="health-normal" id="healthNormal" hidden role="status">機器の状態：<span aria-hidden="true">〇</span> 異常なし</div>
+  <details class="health-panel" id="healthPanel">
     <summary id="healthSummary">機器の状態：確認中</summary>
     <section class="health-grid" id="healthGrid"></section>
   </details>
@@ -316,10 +318,19 @@ function renderHealth(properties) {
     return 'normal';
   });
   const state = states.includes('error') ? 'error' : states.includes('unknown') ? 'unknown' : 'normal';
-  const affected = healthDevices.filter((_, i) => states[i] !== 'normal').map(device => device.name).join('・');
-  $('healthSummary').textContent = state === 'normal' ? '機器の状態：異常なし（クリックで詳細）' : state === 'error' ? '機器の状態：異常あり — ' + affected : '機器の状態：未取得・更新待ち — ' + affected;
+  const messages = healthDevices.flatMap((device, i) => {
+    if (states[i] === 'normal') return [];
+    if (states[i] === 'unknown') return [device.name + '：未取得・更新待ち'];
+    const error = byKey.get(device.eoj + ':88');
+    const code = byKey.get(device.eoj + ':86');
+    return [device.name + '：' + (error.description || '異常あり') + '（' + errorCodeDisplay(error, code) + '）'];
+  });
+  $('healthNormal').hidden = state !== 'normal';
+  $('healthPanel').hidden = state === 'normal';
+  $('healthSummary').textContent = '機器の状態：' + messages.join(' ／ ') + '（クリックで詳細）';
   $('healthSummary').classList.toggle('error-bad', state === 'error');
-  if (state !== previousHealthState || state !== 'normal') $('healthPanel').open = state !== 'normal';
+  // Reopening on every poll would override the user's choice to close the details.
+  if (state !== previousHealthState || state === 'normal') $('healthPanel').open = false;
   previousHealthState = state;
   $('healthGrid').innerHTML = healthDevices.map((device, index) => {
     const status = byKey.get(device.eoj + ':80');
@@ -449,13 +460,17 @@ function drawPowerAxis(ctx, min, max, rect, pad, step) {
   ctx.font = '12px system-ui, sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
+  // Keep grid spacing independent of labels so narrow screens do not lose 1 kW guides.
+  for (let value = Math.ceil(min / 1000) * 1000; value <= max; value += 1000) {
+    const y = powerY(value, min, max, rect, pad);
+    ctx.strokeStyle = value === 0 ? '#62675e' : '#e8ece3';
+    ctx.lineWidth = value === 0 ? 2 : 1;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(rect.width - pad.right, y); ctx.stroke();
+  }
   const ticks = new Set([min, max, 0]);
   for (let value = Math.ceil(min / step) * step; value <= max; value += step) ticks.add(value);
   for (const value of [...ticks].sort((a, b) => a - b)) {
     const y = powerY(value, min, max, rect, pad);
-    ctx.strokeStyle = value === 0 ? '#62675e' : '#d8ddd0';
-    ctx.lineWidth = value === 0 ? 2 : 1;
-    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(rect.width - pad.right, y); ctx.stroke();
     ctx.fillText(String(value / 1000), pad.left - 8, y);
   }
   ctx.textAlign = 'left';
@@ -496,6 +511,13 @@ function drawTimeAxis(ctx, samples, rect, pad) {
   const tick = new Date(start);
   tick.setMinutes(0, 0, 0);
   if (tick.getTime() < start) tick.setHours(tick.getHours() + 1);
+  // Hourly guides remain visible even when time labels must be spaced farther apart.
+  ctx.strokeStyle = '#e8ece3';
+  for (let time = tick.getTime(); time <= end; time += 3600000) {
+    const x = pad.left + (rect.width - pad.left - pad.right) * (time - start) / span;
+    ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, y); ctx.stroke();
+  }
+  ctx.strokeStyle = '#d8ddd0';
   for (let time = tick.getTime(); time <= end; time += step) {
     const x = pad.left + (rect.width - pad.left - pad.right) * (time - start) / span;
     const date = new Date(time);
