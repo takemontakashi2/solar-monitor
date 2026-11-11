@@ -12,8 +12,6 @@ load_rc_config "$name"
 : ${solar_monitor_flush_interval:=1h}
 : ${solar_monitor_listen:=:8080}
 : ${solar_monitor_flags:=}
-# Fall back only when unset; an explicitly empty option must disable old flags.
-solar_monitor_option="${solar_monitor_option-${solar_monitor_flags}}"
 
 command=/usr/sbin/daemon
 # Signal the supervisor: stopping only the child would make daemon restart it.
@@ -36,7 +34,7 @@ solar_monitor_start()
         -data /var/db/solar-monitor/solar.db \
         -config /usr/local/etc/solar-monitor/config.json \
         -flush-interval "$solar_monitor_flush_interval" \
-        -addr "$solar_monitor_listen" $solar_monitor_option
+        -addr "$solar_monitor_listen" $solar_monitor_flags
 }
 
 run_rc_command "$1"

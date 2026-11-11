@@ -39,17 +39,11 @@ service solar_monitor stop
 ```sh
 sysrc solar_monitor_flush_interval=30m
 sysrc solar_monitor_listen=:8081
-sysrc solar_monitor_option='-echonet-addr 192.168.100.202'
+sysrc solar_monitor_flags='-echonet-addr 192.168.100.202'
 service solar_monitor restart
 ```
 
-次回pkg更新から、インストール時に `solar_monitor_option` が未設定なら `/etc/rc.conf` に追加します。既存の値は上書きしません。旧 `solar_monitor_flags` がある場合は、その値を引き継ぎます。未設定なら空文字です。
-
-```sh
-solar_monitor_option="-debug -echonet-addr 192.168.100.202"
-```
-
-`solar_monitor_option` はブート時と `service` 起動時の追加引数です。反映にはサービスの再起動が必要です。変数名にハイフンは使えません。未設定の場合のみ旧 `solar_monitor_flags` を使い、両方設定した場合は `solar_monitor_option` を優先します。空文字を明示した場合は追加引数を使いません。空白で引数を区切る形式で、値自体に空白を含む引数やシェル式の評価には対応しません。毎回保存にする場合は `solar_monitor_flush_interval=0` を指定します。
+`solar_monitor_flags` は追加のコマンドライン引数です。必要な場合のみ指定してください。毎回保存にする場合は `solar_monitor_flush_interval=0` を指定します。
 
 ## 記録の移行・更新・削除
 
@@ -81,12 +75,10 @@ python3.12 packaging/freebsd/build.py --abi FreeBSD:13:amd64
 
 Pythonのコマンド名は環境に合わせてください。`dist/` にpkgとSHA-256ファイルを生成します。ビルド時にシステムへのインストールやユーザー作成は行いません。
 
-FreeBSD 15 / amd64でpkg生成、収録ファイル・所有者・ABI・シェル構文、およびGoのテスト（通常停止時の保存を含む）を確認しています。rootによる実際のpkg追加・削除と、専用ユーザーでの実機通信は未確認です。
+FreeBSD 15 / amd64でpkg生成、収録ファイル・所有者・ABI・シェル構文、およびGoのテスト（通常停止時の保存を含む）を確認しています。FreeBSD 13では利用者環境でpkgのインストール・起動に問題がないことを確認済みです。削除と長期運転は未確認です。
 
 ### FreeBSD 13用の作成条件
 
 FreeBSD 15上で `GOOS=freebsd GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0` とGoの内部リンカーを指定して再ビルドします。共有ライブラリへの依存がないことと、ELFのFreeBSD ABIタグが対象OS以下であることを確認してからpkg化します。今回のGo 1.26.9の生成物はABIタグ1203000です。pkgの対象ABIは `FreeBSD:13:amd64` です。
 
-[GoのFreeBSD対応表](https://go.dev/wiki/FreeBSD) と [FreeBSD 13.5のdaemonマニュアル](https://man.freebsd.org/cgi/man.cgi?query=daemon&sektion=8&manpath=FreeBSD+13.5-RELEASE) で対応条件と使用オプションを照合しています。ABI検査は実機試験の代わりではありません。FreeBSD 13でのインストール・起動・機器通信は未確認です。ABI不一致を無視する強制インストールは必要ありません。
-
-FreeBSD 13版0.9.14のpkgについて、利用者環境でインストール・起動に問題がないことを確認済みです。上記の `solar_monitor_option` 自動追加は、その確認後の次回更新向け変更です。
+[GoのFreeBSD対応表](https://go.dev/wiki/FreeBSD) と [FreeBSD 13.5のdaemonマニュアル](https://man.freebsd.org/cgi/man.cgi?query=daemon&sektion=8&manpath=FreeBSD+13.5-RELEASE) で対応条件と使用オプションを照合しています。ABI検査は実機試験の代わりではありません。FreeBSD 13でのインストール・起動は利用者環境で確認済みです。ABI不一致を無視する強制インストールは必要ありません。
