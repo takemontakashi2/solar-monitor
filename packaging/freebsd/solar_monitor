@@ -1,0 +1,40 @@
+#!/bin/sh
+
+# PROVIDE: solar_monitor
+# REQUIRE: NETWORKING SERVERS
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+name=solar_monitor
+rcvar=solar_monitor_enable
+load_rc_config "$name"
+: ${solar_monitor_enable:=NO}
+: ${solar_monitor_flush_interval:=1h}
+: ${solar_monitor_listen:=:8080}
+: ${solar_monitor_flags:=}
+
+command=/usr/sbin/daemon
+# Signal the supervisor: stopping only the child would make daemon restart it.
+pidfile=/var/run/solar_monitor.pid
+procname=/usr/sbin/daemon
+start_cmd=solar_monitor_start
+
+solar_monitor_start()
+{
+    if [ -n "$(check_pidfile "$pidfile" "$procname")" ]; then
+        echo "${name} is already running."
+        return 1
+    fi
+    # The config directory is writable because discovery saves the target address.
+    /usr/bin/install -d -o solar-monitor -g solar-monitor -m 0750 \
+        /var/db/solar-monitor /usr/local/etc/solar-monitor || return 1
+    /usr/sbin/daemon -c -f -S -s info -T solar-monitor -R 10 \
+        -P "$pidfile" -u solar-monitor \
+        /usr/local/bin/solar-monitor \
+        -data /var/db/solar-monitor/solar.db \
+        -config /usr/local/etc/solar-monitor/config.json \
+        -flush-interval "$solar_monitor_flush_interval" \
+        -addr "$solar_monitor_listen" $solar_monitor_flags
+}
+
+run_rc_command "$1"

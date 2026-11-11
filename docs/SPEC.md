@@ -334,6 +334,10 @@ SHARP JH-RWL8では `9f` の対応属性一覧が標準形式として解析で�
 
 夜間で発電が `0.00 kW` のため、消費、蓄電池放電、買電のEPC候補を照合しやすい。
 
+## FreeBSDパッケージ
+
+0.9.14でFreeBSD用pkgの作成に対応。専用ユーザー `solar-monitor`、設定 `/usr/local/etc/solar-monitor/`、DB `/var/db/solar-monitor/`、rc.dサービスを使用する。サービスの保存間隔は既定1時間。設定とDBは削除後も保持する。対象ABIと確認範囲は [FreeBSD用pkg](FREEBSD.md) を参照。
+
 ## 今後の作業候補
 
 - 1.0でRaspberry Pi常設用インストール／削除スクリプトと説明書を用意する。
