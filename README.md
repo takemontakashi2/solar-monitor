@@ -102,7 +102,7 @@ SQLiteのDBはOS間で共通なので、Windowsで取った記録をRaspberry Pi
 
 ## FreeBSD用pkg
 
-0.9.14のFreeBSD 15 / amd64用pkgを用意しています。専用ユーザー、rc.dサービス、設定・DBの配置と導入方法は [FreeBSD用pkg](docs/FREEBSD.md) を参照してください。
+0.9.14のFreeBSD 13・15 / amd64用pkgを用意しています。専用ユーザー、rc.dサービス、設定・DBの配置と導入方法は [FreeBSD用pkg](docs/FREEBSD.md) を参照してください。
 
 ## 関連ドキュメント
 

@@ -92,4 +92,4 @@ Raspberry Pi向けに実行ファイル、インストール／削除スクリ�
 
 ## FreeBSD用pkg
 
-1.0を待たず、0.9.14から作成可能です。`packaging/freebsd/build.py` を対象FreeBSD環境で実行します。手順と確認範囲は [FREEBSD.md](FREEBSD.md) を参照してください。
+1.0を待たず、0.9.14から作成可能です。`packaging/freebsd/build.py` をFreeBSD環境で実行します。13系amd64向けは `--abi FreeBSD:13:amd64` を指定します。静的リンクと最低ABIの検査を通過したものだけをパッケージ化します。手順と確認範囲は [FREEBSD.md](FREEBSD.md) を参照してください。

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build a native FreeBSD pkg without installing it on the build host."""
+import argparse
 import hashlib
 import json
 import os
@@ -12,17 +13,33 @@ import tempfile
 
 root = Path(__file__).resolve().parents[2]
 if platform.system() != 'FreeBSD':
-    raise SystemExit('Build on the target FreeBSD major version and architecture.')
+    raise SystemExit('Package creation requires FreeBSD and pkg.')
 version = re.search(r'var version = "([^"]+)"', (root / 'main.go').read_text())[1]
-abi = subprocess.check_output(['pkg', 'config', 'ABI'], text=True).strip()
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--abi', choices=['FreeBSD:13:amd64', 'FreeBSD:15:amd64'],
+                    help='Target pkg ABI; static Go binary compatibility is checked below')
+args = parser.parse_args()
+abi = args.abi or subprocess.check_output(['pkg', 'config', 'ABI'], text=True).strip()
+if abi not in ['FreeBSD:13:amd64', 'FreeBSD:15:amd64']:
+    raise SystemExit('Validated packaging targets are FreeBSD 13/15 amd64 only.')
 out = root / 'dist'
 out.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='solar-pkg-') as tmp:
     stage = Path(tmp) / 'stage'
     binary = stage / 'usr/local/bin/solar-monitor'
     binary.parent.mkdir(parents=True)
-    subprocess.run(['go', 'build', '-o', str(binary), '.'], cwd=root,
-                   env={**os.environ, 'CGO_ENABLED': '0'}, check=True)
+    subprocess.run(['go', 'build', '-ldflags=-linkmode=internal', '-o', str(binary), '.'], cwd=root,
+                   env={**os.environ, 'GOOS': 'freebsd', 'GOARCH': 'amd64',
+                        'GOAMD64': 'v1', 'CGO_ENABLED': '0'}, check=True)
+    # A manifest override alone cannot make host-linked binaries compatible with older FreeBSD.
+    headers = subprocess.check_output(['readelf', '-l', str(binary)], text=True)
+    notes = subprocess.check_output(['readelf', '-n', str(binary)], text=True)
+    required = re.search(r'ABI tag: (\d+)', notes)
+    if 'INTERP' in headers or 'DYNAMIC' in headers or not required:
+        raise SystemExit('Expected a static binary with a FreeBSD ABI note.')
+    if int(required[1]) > int(abi.split(':')[1]) * 100000:
+        raise SystemExit('Binary requires a newer FreeBSD ABI than the package target.')
+    print('Verified static FreeBSD binary; minimum ABI tag:', required[1])
     for source, target in [('packaging/freebsd/solar_monitor', 'etc/rc.d/solar_monitor'),
                            ('README.md', 'share/doc/solar-monitor/README.md')]:
         dest = stage / 'usr/local' / target

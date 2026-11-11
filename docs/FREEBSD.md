@@ -1,13 +1,14 @@
 # FreeBSD用pkg（0.9.14）
 
-現在作成済みのパッケージはFreeBSD 15 / amd64用です。他のメジャーバージョンやCPUでは、その環境でビルドしてください。通常のLinux用バイナリとは別です。
+現在作成済みのパッケージはFreeBSD 13 / amd64用と15 / amd64用です。利用するOSに合ったpkgを選んでください。ほかのメジャーバージョンやCPUは未対応です。通常のLinux用バイナリとは別です。
 
 ## インストールと起動
 
 以下はrootで実行します。
 
 ```sh
-pkg add ./solar-monitor-0.9.14-freebsd-15-amd64.pkg
+pkg add ./solar-monitor-0.9.14-freebsd-13-amd64.pkg
+# FreeBSD 15ではファイル名のfreebsd-13をfreebsd-15に読み替えます。
 sysrc solar_monitor_enable=YES
 service solar_monitor start
 ```
@@ -68,9 +69,16 @@ pkg delete solar-monitor
 FreeBSD上でGo、Python 3、pkgを用意し、リポジトリのルートで実行します。
 
 ```sh
-python3.12 packaging/freebsd/build.py
+python3.12 packaging/freebsd/build.py --abi FreeBSD:13:amd64
+# ホストと同じABIを使う場合は --abi を省略できます。
 ```
 
 Pythonのコマンド名は環境に合わせてください。`dist/` にpkgとSHA-256ファイルを生成します。ビルド時にシステムへのインストールやユーザー作成は行いません。
 
 FreeBSD 15 / amd64でpkg生成、収録ファイル・所有者・ABI・シェル構文、およびGoのテスト（通常停止時の保存を含む）を確認しています。rootによる実際のpkg追加・削除と、専用ユーザーでの実機通信は未確認です。
+
+### FreeBSD 13用の作成条件
+
+FreeBSD 15上で `GOOS=freebsd GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0` とGoの内部リンカーを指定して再ビルドします。共有ライブラリへの依存がないことと、ELFのFreeBSD ABIタグが対象OS以下であることを確認してからpkg化します。今回のGo 1.26.9の生成物はABIタグ1203000です。pkgの対象ABIは `FreeBSD:13:amd64` です。
+
+[GoのFreeBSD対応表](https://go.dev/wiki/FreeBSD) と [FreeBSD 13.5のdaemonマニュアル](https://man.freebsd.org/cgi/man.cgi?query=daemon&sektion=8&manpath=FreeBSD+13.5-RELEASE) で対応条件と使用オプションを照合しています。ABI検査は実機試験の代わりではありません。FreeBSD 13でのインストール・起動・機器通信は未確認です。ABI不一致を無視する強制インストールは必要ありません。

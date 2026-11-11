@@ -336,7 +336,7 @@ SHARP JH-RWL8では `9f` の対応属性一覧が標準形式として解析で�
 
 ## FreeBSDパッケージ
 
-0.9.14でFreeBSD用pkgの作成に対応。専用ユーザー `solar-monitor`、設定 `/usr/local/etc/solar-monitor/`、DB `/var/db/solar-monitor/`、rc.dサービスを使用する。サービスの保存間隔は既定1時間。設定とDBは削除後も保持する。対象ABIと確認範囲は [FreeBSD用pkg](FREEBSD.md) を参照。
+0.9.14でFreeBSD 13・15 / amd64用pkgの作成に対応。専用ユーザー `solar-monitor`、設定 `/usr/local/etc/solar-monitor/`、DB `/var/db/solar-monitor/`、rc.dサービスを使用する。サービスの保存間隔は既定1時間。設定とDBは削除後も保持する。対象ABIと確認範囲は [FreeBSD用pkg](FREEBSD.md) を参照。
 
 ## 今後の作業候補
 
